@@ -1,0 +1,49 @@
+#compdef arch-recovery
+# completions/_arch-recovery — zsh tab-completion for arch-recovery
+#
+# Installation (choose one):
+#   # System-wide:
+#   sudo cp _arch-recovery /usr/share/zsh/site-functions/_arch-recovery
+#
+#   # Per-user — put the file in a directory on $fpath:
+#   mkdir -p ~/.zsh/completions
+#   cp _arch-recovery ~/.zsh/completions/
+#   # Add to ~/.zshrc:  fpath=(~/.zsh/completions $fpath)
+#   # Then: autoload -U compinit && compinit
+
+_arch_recovery() {
+    local context state state_descr line
+    typeset -A opt_args
+
+    local -a block_devices
+    block_devices=( ${(f)"$(lsblk -dpno NAME 2>/dev/null)"} )
+    # Add LUKS mappers if any
+    if [[ -d /dev/mapper ]]; then
+        block_devices+=( /dev/mapper/*(N) )
+    fi
+
+    _arguments -C \
+        '(--auto)--auto[Non-interactive: auto-detect and repair]' \
+        '(--dry-run)--dry-run[Simulate all actions; nothing written]' \
+        '(--tui)--tui[Full-screen menu (whiptail/dialog)]' \
+        '(--diagnose)--diagnose[Scan only; zero changes made]' \
+        '--root[Root partition]:block device:('"${block_devices[*]}"')' \
+        '--efi[EFI partition]:block device:('"${block_devices[*]}"')' \
+        '(--no-initramfs)--no-initramfs[Skip mkinitcpio rebuild]' \
+        '(--no-bootloader)--no-bootloader[Skip bootloader reinstall]' \
+        '(--no-fstab)--no-fstab[Skip fstab validation]' \
+        '(--repair-keyring)--repair-keyring[Repair pacman keyring + mirrorlist]' \
+        '(--setup-network)--setup-network[Configure network first]' \
+        '(--list-snapshots)--list-snapshots[List BTRFS snapshots]' \
+        '--rollback[Roll back to snapshot]:snapshot name:( )' \
+        '--log-level[Verbosity level]:level:(silent normal verbose debug)' \
+        '(-v --verbose)'{-v,--verbose}'[Extra detail]' \
+        '--debug[Trace every command]' \
+        '(-q --silent)'{-q,--silent}'[Errors only]' \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '--version[Show version number]' \
+        '--changelog[Show changelog]' \
+        && return 0
+}
+
+_arch_recovery "$@"

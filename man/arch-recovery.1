@@ -1,0 +1,256 @@
+.\" arch-recovery.1 — manual page for the Arch System Recovery Toolkit
+.\" Generate HTML preview: man2html arch-recovery.1
+.\" View locally:          man ./man/arch-recovery.1
+.TH ARCH\-RECOVERY 1 "2025-06-01" "arch\-recovery 1.1.0" "Arch Linux Utilities"
+
+.SH NAME
+arch\-recovery \- Arch Linux system recovery toolkit
+
+.SH SYNOPSIS
+.B arch\-recovery
+[\fIOPTIONS\fR]
+
+.SH DESCRIPTION
+\fBarch\-recovery\fR is a modular, production-grade recovery toolkit for
+Arch-based Linux systems.
+It is designed to run from a live USB environment and repair common boot
+failures without requiring expert knowledge of every recovery step.
+
+Supported repair operations include rebuilding the initramfs with
+\fBmkinitcpio\fR(8), reinstalling \fBGRUB\fR or \fBsystemd-boot\fR,
+validating and repairing \fI/etc/fstab\fR, repairing the pacman keyring,
+setting up network connectivity, and rolling back BTRFS snapshots.
+
+The tool works in three primary modes:
+.IP \(bu 2
+\fBInteractive\fR — guided prompts; safest for beginners
+.IP \(bu 2
+\fBTUI\fR — full-screen menu using \fBwhiptail\fR(1) or \fBdialog\fR(1)
+.IP \(bu 2
+\fBAuto\fR — fully non-interactive; suitable for scripts
+
+All modes produce a detailed log at \fI/tmp/recovery-toolkit.log\fR.
+
+.SH OPTIONS
+
+.SS Modes
+.TP
+.B \-\-tui
+Launch the full-screen terminal menu.
+Requires \fBwhiptail\fR(1) or \fBdialog\fR(1); falls back to a pure-bash
+numbered menu if neither is available.
+.TP
+.B \-\-auto
+Non-interactive mode. Auto-detects all partitions and performs all default
+repairs without prompting.
+.TP
+.B \-\-diagnose
+Scan the system and report problems. Makes \fBzero\fR changes to the target
+system. Useful as a first step when you don't know what is wrong.
+.TP
+.B \-\-dry\-run
+Simulate every action and log what would happen, but write nothing to disk.
+Safe to run at any time.
+
+.SS Devices
+.TP
+.BI \-\-root " DEVICE"
+Specify the root partition explicitly (e.g.\ \fI/dev/sda2\fR,
+\fI/dev/nvme0n1p2\fR).
+If omitted, auto-detection is attempted.
+.TP
+.BI \-\-efi " DEVICE"
+Specify the EFI System Partition (e.g.\ \fI/dev/sda1\fR).
+If omitted, auto-detection is attempted.
+
+.SS Repair selection
+All repair steps are enabled by default. Use the following flags to skip
+individual steps.
+.TP
+.B \-\-no\-initramfs
+Skip the \fBmkinitcpio \-P\fR rebuild.
+.TP
+.B \-\-no\-bootloader
+Skip bootloader reinstallation.
+.TP
+.B \-\-no\-fstab
+Skip \fI/etc/fstab\fR validation and repair.
+.TP
+.B \-\-repair\-keyring
+Additionally repair the pacman keyring and refresh the mirrorlist.
+Disabled by default; requires network access.
+.TP
+.B \-\-setup\-network
+Configure network connectivity before chrooting.
+Supports NetworkManager (\fBnmcli\fR(1)), \fBiwctl\fR(1),
+\fBwpa_supplicant\fR(8), and \fBdhclient\fR(8).
+
+.SS BTRFS snapshots
+.TP
+.B \-\-list\-snapshots
+List all BTRFS subvolumes on the root device. Mounts at \fBsubvolid=5\fR
+(top-level) to inspect the full subvolume tree.
+.TP
+.BI \-\-rollback " SNAPSHOT"
+Roll back the root subvolume to \fISNAPSHOT\fR. The current root subvolume
+is renamed to \fI@.broken-TIMESTAMP\fR before the rollback so it can be
+recovered if needed.
+
+.SS Post-repair verification
+.TP
+.B \-\-health\-check
+Run a post-repair verification scan inside the chroot. Checks kernel
+images, initramfs, bootloader config, and systemd unit status.
+Produces a pass/warn/fail summary.
+
+.SS Self-update
+.TP
+.BI \-\-update
+Check GitHub for a newer release and install it if one is available.
+Requires \fBcurl\fR(1) and network access.
+.TP
+.B \-\-check\-update
+Check for updates without installing.
+
+.SS Verbosity
+.TP
+.BR \-v ", " \-\-verbose
+Show extra diagnostic detail on stderr.
+.TP
+.B \-\-debug
+Trace every command as it executes. Implies \fB\-\-verbose\fR.
+.TP
+.BR \-q ", " \-\-silent
+Suppress all output except errors.
+.TP
+.BI \-\-log\-level " LEVEL"
+Set verbosity explicitly. \fILEVEL\fR is one of:
+\fBsilent\fR, \fBnormal\fR, \fBverbose\fR, \fBdebug\fR.
+
+.SS Information
+.TP
+.BR \-h ", " \-\-help
+Print a usage summary and exit.
+.TP
+.B \-\-version
+Print the version number and exit.
+.TP
+.B \-\-changelog
+Print the changelog and exit.
+
+.SH SHELL LAUNCHERS
+.TP
+.B arch\-recovery
+Bash entry point (default). Requires Bash 4.2 or newer.
+.TP
+.B arch\-recovery.fish
+Fish shell wrapper. Delegates to the bash entry point.
+.TP
+.B arch\-recovery.sh
+POSIX \fBsh\fR / \fBdash\fR / \fBzsh\fR wrapper.
+
+.SH FILES
+.TP
+.I /tmp/recovery-toolkit.log
+Full log of all operations performed during the current session.
+Persists until reboot.
+.TP
+.I /etc/pacman.d/mirrorlist
+Modified by \fB\-\-repair\-keyring\fR.
+.TP
+.I /mnt/recovery
+Default mount point used for the target root filesystem.
+
+.SH EXAMPLES
+.TP
+Guided interactive recovery (recommended for first-time users):
+.B sudo arch\-recovery
+
+.TP
+Full-screen menu:
+.B sudo arch\-recovery \-\-tui
+
+.TP
+Diagnose without making changes:
+.B sudo arch\-recovery \-\-diagnose
+
+.TP
+Fully automated repair:
+.B sudo arch\-recovery \-\-auto
+
+.TP
+Preview what would happen, in detail:
+.B sudo arch\-recovery \-\-dry\-run \-\-verbose
+
+.TP
+Specify partitions explicitly:
+.B sudo arch\-recovery \-\-root /dev/sda2 \-\-efi /dev/sda1
+
+.TP
+Auto-repair plus keyring fix:
+.B sudo arch\-recovery \-\-auto \-\-repair\-keyring
+
+.TP
+List available BTRFS snapshots:
+.B sudo arch\-recovery \-\-list\-snapshots \-\-root /dev/sda2
+
+.TP
+Roll back to a BTRFS snapshot:
+.B sudo arch\-recovery \-\-rollback @2024-01-15 \-\-root /dev/sda2
+
+.TP
+Repair only initramfs (skip bootloader):
+.B sudo arch\-recovery \-\-auto \-\-no\-bootloader
+
+.SH SUPPORTED SYSTEMS
+.IP \(bu 2
+Arch Linux and Arch-based distributions (Manjaro, EndeavourOS, etc.)
+.IP \(bu 2
+Filesystems: \fBBTRFS\fR (with automatic subvolume detection), \fBext4\fR
+.IP \(bu 2
+Encryption: \fBLUKS\fR (single-layer)
+.IP \(bu 2
+LVM volume group detection and activation
+.IP \(bu 2
+Bootloaders: \fBGRUB\fR (UEFI x86_64), \fBsystemd-boot\fR
+.IP \(bu 2
+Architecture: x86_64 only
+
+.SH LIMITATIONS
+.IP \(bu 2
+UEFI systems only (no legacy BIOS / MBR GRUB)
+.IP \(bu 2
+Single-layer LUKS only (no LUKS-on-LVM)
+.IP \(bu 2
+Does not repair filesystem corruption (\fBfsck\fR(8) must be run manually)
+.IP \(bu 2
+Does not install kernels or packages
+.IP \(bu 2
+No Secure Boot re-enrollment
+
+.SH EXIT STATUS
+.TP
+.B 0
+Recovery or scan completed successfully.
+.TP
+.B 1
+Fatal error encountered. See \fI/tmp/recovery-toolkit.log\fR.
+.TP
+.B 130
+Interrupted by user (SIGINT / Ctrl-C).
+
+.SH SEE ALSO
+.BR mkinitcpio (8),
+.BR grub-install (8),
+.BR bootctl (1),
+.BR cryptsetup (8),
+.BR btrfs-subvolume (8),
+.BR arch-chroot (8),
+.BR lsblk (8),
+.BR blkid (8)
+
+.SH AUTHORS
+Maintained at https://github.com/sumesh-s-dev/arch-system-recovery
+
+.SH LICENSE
+MIT License. See the LICENSE file in the source distribution.
