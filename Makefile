@@ -1,7 +1,8 @@
 # Makefile — arch-system-recovery
 PREFIX     ?= /usr/local
 SHELL      := /bin/bash
-BIN        := bin/arch-recovery bin/arch-recovery.fish bin/arch-recovery.sh
+BASH_BIN   := bin/arch-recovery bin/arch-recovery.sh
+FISH_BIN   := bin/arch-recovery.fish
 LIBS       := $(wildcard lib/*.sh)
 TESTS      := $(wildcard tests/test_*.sh)
 MAN        := man/arch-recovery.1
@@ -24,16 +25,23 @@ uninstall:
 check:
 	@echo "Running syntax checks..."
 	@fail=0; \
-	for f in $(BIN) $(LIBS) install.sh tests/run_tests.sh tests/helpers.sh $(TESTS); do \
+	for f in $(BASH_BIN) $(LIBS) install.sh tests/run_tests.sh tests/helpers.sh $(TESTS); do \
 	    bash -n "$$f" && echo "  ✓ $$f" || { echo "  ✗ $$f"; fail=1; }; \
 	done; \
+	if command -v fish >/dev/null 2>&1; then \
+	    for f in $(FISH_BIN); do \
+	        fish -n "$$f" && echo "  ✓ $$f" || { echo "  ✗ $$f"; fail=1; }; \
+	    done; \
+	else \
+	    echo "  ! fish not found; skipping fish syntax check ($(FISH_BIN))"; \
+	fi; \
 	exit $$fail
 
 ## shellcheck    — run shellcheck on all bash scripts
 shellcheck:
 	@if ! command -v shellcheck &>/dev/null; then \
 	    echo "shellcheck not found. Install: pacman -S shellcheck"; exit 1; fi
-	@shellcheck -S warning -x $(BIN) $(LIBS) install.sh \
+	@shellcheck -S warning -x $(BASH_BIN) $(LIBS) install.sh \
 	    tests/run_tests.sh tests/helpers.sh $(TESTS)
 	@echo "  shellcheck passed."
 
