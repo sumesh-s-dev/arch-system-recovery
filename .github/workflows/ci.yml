@@ -52,3 +52,26 @@ jobs:
           test -s completions/arch-recovery.bash
           test -s completions/_arch-recovery
           test -s completions/arch-recovery.fish
+
+  arch-smoke:
+    name: arch-smoke
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            bash make fish man-db groff shellcheck git
+      - name: Syntax check
+        run: make check
+      - name: Unit tests
+        run: make test
+      - name: Manpage check
+        run: MANPAGER=cat PAGER=cat make man
+      - name: Completions check
+        run: |
+          test -s completions/arch-recovery.bash
+          test -s completions/_arch-recovery
+          test -s completions/arch-recovery.fish
