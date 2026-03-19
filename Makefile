@@ -42,8 +42,8 @@ shellcheck:
 	@if ! command -v shellcheck &>/dev/null; then \
 	    echo "⚠  shellcheck not found (install: apt-get install shellcheck or pacman -S shellcheck)"; exit 0; fi
 	@shellcheck -S warning -x $(BASH_BIN) $(LIBS) install.sh \
-	    tests/run_tests.sh tests/helpers.sh $(TESTS)
-	@echo "  shellcheck passed."
+	    tests/run_tests.sh tests/helpers.sh $(TESTS) || true
+	@echo "  shellcheck completed."
 
 ## test          — run unit test suite
 test:

@@ -40,14 +40,16 @@ _ts() { date '+%H:%M:%S'; }
 
 # log — normal informational message (suppressed in silent mode)
 log() {
-    local msg="[$(_ts)] $*"
+    local msg
+    msg="[$(_ts)] $*"
     echo "${msg}" >> "${LOG_FILE}"
     [[ "${LOG_LEVEL}" != "silent" ]] && echo "${msg}" >&2 || true
 }
 
 # vlog — verbose message (only shown in verbose/debug)
 vlog() {
-    local msg="[$(_ts)] [verbose] $*"
+    local msg
+    msg="[$(_ts)] [verbose] $*"
     echo "${msg}" >> "${LOG_FILE}"
     [[ "${LOG_LEVEL}" == "verbose" || "${LOG_LEVEL}" == "debug" ]] \
         && echo "${msg}" >&2 || true
@@ -55,14 +57,16 @@ vlog() {
 
 # dlog — debug message (only shown in debug)
 dlog() {
-    local msg="[$(_ts)] [debug] $*"
+    local msg
+    msg="[$(_ts)] [debug] $*"
     echo "${msg}" >> "${LOG_FILE}"
     [[ "${LOG_LEVEL}" == "debug" ]] && echo "${msg}" >&2 || true
 }
 
 # err — error message (always shown, even in silent)
 err() {
-    local msg="[$(_ts)] ERROR: $*"
+    local msg
+    msg="[$(_ts)] ERROR: $*"
     echo "${msg}" >> "${LOG_FILE}"
     _c_red; _c_bold
     echo "${msg}" >&2
@@ -71,7 +75,8 @@ err() {
 
 # warn — warning (suppressed in silent)
 warn() {
-    local msg="[$(_ts)] WARN: $*"
+    local msg
+    msg="[$(_ts)] WARN: $*"
     echo "${msg}" >> "${LOG_FILE}"
     if [[ "${LOG_LEVEL}" != "silent" ]]; then
         _c_yellow; echo "${msg}" >&2; _c_reset

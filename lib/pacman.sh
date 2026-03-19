@@ -53,7 +53,9 @@ repair_pacman_keyring() {
 # or falls back to the static Arch bootstrap mirror.
 _refresh_mirrorlist() {
     local ml_target="${MOUNT_ROOT}/etc/pacman.d/mirrorlist"
-    local ml_backup="${ml_target}.bak.$(date '+%Y%m%d_%H%M%S')"
+    local ts
+    ts=$(date '+%Y%m%d_%H%M%S')
+    local ml_backup="${ml_target}.bak.${ts}"
 
     [[ -f "${ml_target}" ]] && cp "${ml_target}" "${ml_backup}"
     vlog "Mirrorlist backup: ${ml_backup}"
