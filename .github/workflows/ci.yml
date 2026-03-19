@@ -65,13 +65,14 @@ jobs:
     container:
       image: archlinux:latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install git first
-        run: pacman -Sy --noconfirm git
-      - name: Install dependencies
+      - name: Setup pacman and install runtime deps
         run: |
-          pacman -Sy --noconfirm --needed \
-            bash make fish man-db groff shellcheck
+          pacman -Syu --noconfirm base-devel curl git
+      - uses: actions/checkout@v4
+      - name: Install project dependencies
+        run: |
+          pacman -S --noconfirm --needed \
+            make fish man-db groff shellcheck
       - name: Syntax check
         run: make check
       - name: Unit tests
