@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install fish
-        run: sudo apt-get update && sudo apt-get install -y fish
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y make fish
       - name: Script syntax check
         run: make check
 
@@ -21,8 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y make shellcheck
       - name: Run shellcheck
         run: make shellcheck
 
@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y make
       - name: Run unit tests
         run: make test
 
@@ -39,6 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y make man-db groff
       - name: Validate manpage builds
         run: MANPAGER=cat PAGER=cat make man
 
@@ -47,6 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y make
       - name: Ensure completion files exist and are non-empty
         run: |
           test -s completions/arch-recovery.bash
@@ -60,10 +66,12 @@ jobs:
       image: archlinux:latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install git first
+        run: pacman -Sy --noconfirm git
       - name: Install dependencies
         run: |
-          pacman -Syu --noconfirm --needed \
-            bash make fish man-db groff shellcheck git
+          pacman -Sy --noconfirm --needed \
+            bash make fish man-db groff shellcheck
       - name: Syntax check
         run: make check
       - name: Unit tests
