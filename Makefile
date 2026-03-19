@@ -40,7 +40,7 @@ check:
 ## shellcheck    — run shellcheck on all bash scripts
 shellcheck:
 	@if ! command -v shellcheck &>/dev/null; then \
-	    echo "shellcheck not found. Install: pacman -S shellcheck"; exit 1; fi
+	    echo "⚠  shellcheck not found (install: apt-get install shellcheck or pacman -S shellcheck)"; exit 0; fi
 	@shellcheck -S warning -x $(BASH_BIN) $(LIBS) install.sh \
 	    tests/run_tests.sh tests/helpers.sh $(TESTS)
 	@echo "  shellcheck passed."
