@@ -5,6 +5,9 @@ Designed to be run from a live USB — it repairs the most common reasons an
 Arch installation will not boot, with zero knowledge required from the user.
 
 [![CI](https://github.com/sumesh-s-dev/arch-system-recovery/actions/workflows/ci.yml/badge.svg)](https://github.com/sumesh-s-dev/arch-system-recovery/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Shell](https://img.shields.io/badge/Shell-Bash%2FShell%2FFish-brightgreen)](https://www.gnu.org/software/bash/)
+[![GitHub Release](https://img.shields.io/github/v/release/sumesh-s-dev/arch-system-recovery?include_prereleases&label=Release)](https://github.com/sumesh-s-dev/arch-system-recovery/releases)
 
 ---
 
