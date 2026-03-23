@@ -58,28 +58,30 @@ integration-test:
 ## dist          — build verified release bundle in dist/
 dist:
 	@command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum not found"; exit 1; }
-	@command -v gzip >/dev/null 2>&1 || { echo "gzip not found"; exit 1; }
-	@set -o pipefail; \
-	version="$$(bash bin/arch-recovery --version | awk '{print $$2}')"; \
+	@version="$$(bash bin/arch-recovery --version | awk '{print $$2}')"; \
 	tag="v$${version}"; \
-	archive="arch-system-recovery-$${tag}.tar.gz"; \
+	archive="arch-system-recovery-$${tag}.tar"; \
 	root_dir="arch-system-recovery-$${version}"; \
 	mkdir -p dist; \
 	rm -f "dist/$${archive}" "dist/$${archive}.sha256"; \
 	if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
-	    git ls-files -z | tar --null \
+	    git ls-files -z -- . ':(exclude)docs/releases/*.manifest' ':(exclude)docs/releases/*.manifest.sig' \
+	        | tar --null \
+	        --format=ustar \
 	        --sort=name \
 	        --mtime='UTC 1970-01-01' \
 	        --owner=0 --group=0 --numeric-owner \
 	        --transform "s,^,$${root_dir}/," \
-	        -cf - -T - | gzip -n > "dist/$${archive}"; \
+	        -cf "dist/$${archive}" -T -; \
 	else \
 	    tar --exclude='./.git' --exclude='./dist' \
+	        --exclude='./docs/releases/*.manifest' --exclude='./docs/releases/*.manifest.sig' \
+	        --format=ustar \
 	        --sort=name \
 	        --mtime='UTC 1970-01-01' \
 	        --owner=0 --group=0 --numeric-owner \
 	        --transform "s,^\.,$${root_dir}," \
-	        -cf - . | gzip -n > "dist/$${archive}"; \
+	        -cf "dist/$${archive}" .; \
 	fi; \
 	( cd dist && sha256sum "$${archive}" > "$${archive}.sha256" ); \
 		echo "Built dist/$${archive}"; \
@@ -91,7 +93,7 @@ release-manifest: dist
 	@command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum not found"; exit 1; }
 	@version="$$(bash bin/arch-recovery --version | awk '{print $$2}')"; \
 		tag="v$${version}"; \
-		archive="dist/arch-system-recovery-$${tag}.tar.gz"; \
+		archive="dist/arch-system-recovery-$${tag}.tar"; \
 		archive_name="$$(basename "$${archive}")"; \
 		manifest="docs/releases/$${tag}.manifest"; \
 		signing_key="$${SIGNING_KEY:-$$HOME/.ssh/id_ed25519}"; \

@@ -225,8 +225,8 @@ sudo ./bin/arch-recovery --update
 ```
 
 Release maintainers should publish both `make dist` assets and the signed manifest:
-- `arch-system-recovery-vX.Y.Z.tar.gz`
-- `arch-system-recovery-vX.Y.Z.tar.gz.sha256`
+- `arch-system-recovery-vX.Y.Z.tar`
+- `arch-system-recovery-vX.Y.Z.tar.sha256`
 - `arch-system-recovery-vX.Y.Z.manifest`
 - `arch-system-recovery-vX.Y.Z.manifest.sig`
 

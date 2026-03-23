@@ -12,12 +12,12 @@ release_json='
   "tag_name": "v1.2.3",
   "assets": [
     {
-      "name": "arch-system-recovery-v1.2.3.tar.gz",
-      "browser_download_url": "https://example.com/arch-system-recovery-v1.2.3.tar.gz"
+      "name": "arch-system-recovery-v1.2.3.tar",
+      "browser_download_url": "https://example.com/arch-system-recovery-v1.2.3.tar"
     },
     {
-      "name": "arch-system-recovery-v1.2.3.tar.gz.sha256",
-      "browser_download_url": "https://example.com/arch-system-recovery-v1.2.3.tar.gz.sha256"
+      "name": "arch-system-recovery-v1.2.3.tar.sha256",
+      "browser_download_url": "https://example.com/arch-system-recovery-v1.2.3.tar.sha256"
     },
     {
       "name": "arch-system-recovery-v1.2.3.manifest",
@@ -33,17 +33,17 @@ release_json='
 
 assert_eq "$(_latest_release_tag "${release_json}")" "v1.2.3" "latest release tag parser extracts tag"
 assert_eq "$(_release_bundle_name "v1.2.3")" \
-    "arch-system-recovery-v1.2.3.tar.gz" "release bundle name matches convention"
+    "arch-system-recovery-v1.2.3.tar" "release bundle name matches convention"
 assert_eq "$(_release_bundle_checksum_name "v1.2.3")" \
-    "arch-system-recovery-v1.2.3.tar.gz.sha256" "checksum asset name matches convention"
+    "arch-system-recovery-v1.2.3.tar.sha256" "checksum asset name matches convention"
 assert_eq "$(_release_bundle_manifest_name "v1.2.3")" \
     "arch-system-recovery-v1.2.3.manifest" "release manifest name matches convention"
 assert_eq "$(_release_bundle_manifest_signature_name "v1.2.3")" \
     "arch-system-recovery-v1.2.3.manifest.sig" "release manifest signature name matches convention"
-assert_eq "$(_release_asset_url "${release_json}" "arch-system-recovery-v1.2.3.tar.gz")" \
-    "https://example.com/arch-system-recovery-v1.2.3.tar.gz" "release asset URL parser finds bundle"
-assert_eq "$(_release_asset_url "${release_json}" "arch-system-recovery-v1.2.3.tar.gz.sha256")" \
-    "https://example.com/arch-system-recovery-v1.2.3.tar.gz.sha256" "release asset URL parser finds checksum"
+assert_eq "$(_release_asset_url "${release_json}" "arch-system-recovery-v1.2.3.tar")" \
+    "https://example.com/arch-system-recovery-v1.2.3.tar" "release asset URL parser finds bundle"
+assert_eq "$(_release_asset_url "${release_json}" "arch-system-recovery-v1.2.3.tar.sha256")" \
+    "https://example.com/arch-system-recovery-v1.2.3.tar.sha256" "release asset URL parser finds checksum"
 assert_eq "$(_release_asset_url "${release_json}" "arch-system-recovery-v1.2.3.manifest")" \
     "https://example.com/arch-system-recovery-v1.2.3.manifest" "release asset URL parser finds manifest"
 assert_eq "$(_release_asset_url "${release_json}" "arch-system-recovery-v1.2.3.manifest.sig")" \
@@ -52,7 +52,7 @@ assert_eq "$(_release_asset_url "${release_json}" "arch-system-recovery-v1.2.3.m
 tmpdir="$(mktemp -d /tmp/test-update-sign.XXXXXX)"
 ssh-keygen -q -t ed25519 -N "" -f "${tmpdir}/release_key" >/dev/null
 printf 'test-signer %s\n' "$(cat "${tmpdir}/release_key.pub")" > "${tmpdir}/allowed_signers"
-printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  archive.tar.gz\n' \
+printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  archive.tar\n' \
     > "${tmpdir}/manifest"
 ssh-keygen -Y sign -f "${tmpdir}/release_key" -n arch-recovery -I test-signer \
     "${tmpdir}/manifest" >/dev/null 2>&1

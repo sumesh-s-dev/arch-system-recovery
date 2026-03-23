@@ -60,7 +60,7 @@ jobs:
       - name: Verify signed release manifest
         run: |
           set -euo pipefail
-          archive="dist/arch-system-recovery-${GITHUB_REF_NAME}.tar.gz"
+          archive="dist/arch-system-recovery-${GITHUB_REF_NAME}.tar"
           archive_checksum="${archive}.sha256"
           manifest="docs/releases/${GITHUB_REF_NAME}.manifest"
           signature="${manifest}.sig"
@@ -79,8 +79,8 @@ jobs:
           name: ${{ github.ref_name }}
           body_path: docs/releases/${{ github.ref_name }}.md
           files: |
-            dist/arch-system-recovery-${{ github.ref_name }}.tar.gz
-            dist/arch-system-recovery-${{ github.ref_name }}.tar.gz.sha256
+            dist/arch-system-recovery-${{ github.ref_name }}.tar
+            dist/arch-system-recovery-${{ github.ref_name }}.tar.sha256
             docs/releases/${{ github.ref_name }}.manifest
             docs/releases/${{ github.ref_name }}.manifest.sig
           fail_on_unmatched_files: true

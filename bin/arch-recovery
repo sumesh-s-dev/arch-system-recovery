@@ -176,11 +176,18 @@ _show_changelog() {
     cat <<'EOF'
 CHANGELOG
 
+v1.1.2
+  + Moved runtime logs into private /tmp/arch-recovery-session.* directories
+  + Added signed release-manifest verification for self-update
+  + Hardened the release workflow to verify signed tags before publishing
+  + Switched verified release bundles to deterministic .tar assets for cross-platform validation
+  + Added loopback integration coverage and reproducible-bundle regression tests
+
 v1.1.1
   + Added explicit --boot support for systems with a separate /boot partition
   + Strengthened root / boot / EFI auto-detection using mounted fstab ownership checks
   + Diagnose and health-check now mount separate /boot layouts read-only when needed
-  + Self-update now installs only verified release bundles (.tar.gz + .sha256)
+  + Self-update now installs only verified release bundles (.tar + .sha256)
   + Added make dist for release bundle generation and checksum publication
   + TUI and CLI completion metadata updated for new flags
   + Fixed release bundle naming so published assets match the updater contract
@@ -566,7 +573,7 @@ _latest_release_tag() {
 
 _release_bundle_name() {
     local tag="${1:?_release_bundle_name requires a tag}"
-    echo "${RELEASE_BUNDLE_PREFIX}-${tag}.tar.gz"
+    echo "${RELEASE_BUNDLE_PREFIX}-${tag}.tar"
 }
 
 _release_bundle_checksum_name() {
@@ -713,7 +720,7 @@ _extract_verified_release_bundle() {
     local tmpdir="${3:?_extract_verified_release_bundle requires a temp dir}"
     local extracted_dir version
 
-    tar -xzf "${archive_path}" -C "${tmpdir}" \
+    tar -xf "${archive_path}" -C "${tmpdir}" \
         || die "Failed to extract verified update bundle"
 
     extracted_dir="$(find "${tmpdir}" -maxdepth 1 -type d -name 'arch-system-recovery-*' \
