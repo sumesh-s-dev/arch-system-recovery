@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: publish-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y make
+
+      - name: Validate tag, notes, and release assets
+        run: |
+          set -euo pipefail
+          version="$(bash bin/arch-recovery --version | awk '{print $2}')"
+          notes_path="docs/releases/${GITHUB_REF_NAME}.md"
+          if [[ "v${version}" != "${GITHUB_REF_NAME}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match toolkit version v${version}" >&2
+            exit 1
+          fi
+          [[ -f "${notes_path}" ]] || {
+            echo "Missing release notes: ${notes_path}" >&2
+            exit 1
+          }
+
+      - name: Build release bundle
+        run: make dist
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: docs/releases/${{ github.ref_name }}.md
+          files: |
+            dist/arch-system-recovery-${{ github.ref_name }}.tar.gz
+            dist/arch-system-recovery-${{ github.ref_name }}.tar.gz.sha256
+          fail_on_unmatched_files: true

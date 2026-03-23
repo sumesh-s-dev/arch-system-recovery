@@ -77,6 +77,9 @@ When auto-detection gets it wrong, or on unusual partition layouts:
 # Root only (EFI will be prompted interactively)
 sudo ./bin/arch-recovery --root /dev/sda2
 
+# Root + separate /boot + EFI
+sudo ./bin/arch-recovery --root /dev/sda2 --boot /dev/sda1 --efi /dev/sda3
+
 # Both root and EFI
 sudo ./bin/arch-recovery --root /dev/sda2 --efi /dev/sda1
 
@@ -216,9 +219,13 @@ of manual commands to undo the changes if something goes wrong.
 # Check if a newer version is available
 sudo ./bin/arch-recovery --check-update
 
-# Download and install the latest release
+# Download and install the latest verified release bundle
 sudo ./bin/arch-recovery --update
 ```
+
+Release maintainers should upload both `make dist` assets:
+- `arch-system-recovery-vX.Y.Z.tar.gz`
+- `arch-system-recovery-vX.Y.Z.tar.gz.sha256`
 
 ---
 

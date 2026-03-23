@@ -28,6 +28,7 @@ _arch_recovery() {
         '(--tui)--tui[Full-screen menu (whiptail/dialog)]' \
         '(--diagnose)--diagnose[Scan only; zero changes made]' \
         '--root[Root partition]:block device:('"${block_devices[*]}"')' \
+        '--boot[Separate /boot partition]:block device:('"${block_devices[*]}"')' \
         '--efi[EFI partition]:block device:('"${block_devices[*]}"')' \
         '(--no-initramfs)--no-initramfs[Skip mkinitcpio rebuild]' \
         '(--no-bootloader)--no-bootloader[Skip bootloader reinstall]' \
@@ -36,6 +37,9 @@ _arch_recovery() {
         '(--setup-network)--setup-network[Configure network first]' \
         '(--list-snapshots)--list-snapshots[List BTRFS snapshots]' \
         '--rollback[Roll back to snapshot]:snapshot name:( )' \
+        '--health-check[Verify system readiness without repairing]' \
+        '--update[Install the latest verified release bundle]' \
+        '--check-update[Check for a newer release]' \
         '--log-level[Verbosity level]:level:(silent normal verbose debug)' \
         '(-v --verbose)'{-v,--verbose}'[Extra detail]' \
         '--debug[Trace every command]' \

@@ -22,7 +22,7 @@ _arch_recovery_complete() {
     fi
 
     # Flags that take a device argument
-    local device_flags="--root --efi"
+    local device_flags="--root --boot --efi"
     # Flags that take a string argument
     local arg_flags="--log-level --rollback"
 
@@ -56,6 +56,7 @@ _arch_recovery_complete() {
         --tui
         --diagnose
         --root
+        --boot
         --efi
         --no-initramfs
         --no-bootloader
@@ -64,6 +65,9 @@ _arch_recovery_complete() {
         --setup-network
         --list-snapshots
         --rollback
+        --health-check
+        --update
+        --check-update
         --log-level
         --verbose
         --debug

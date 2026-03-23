@@ -65,6 +65,21 @@ prompt_efi_device() {
     echo "${dev}"
 }
 
+prompt_boot_device() {
+    echo "" >&2
+    _c_yellow; printf "  Separate /boot partition (leave blank to skip): " >&2; _c_reset
+
+    local dev
+    read -r dev
+
+    if [[ -n "${dev}" && ! -b "${dev}" ]]; then
+        warn "Device '${dev}' not found — skipping /boot mount"
+        echo ""
+        return 0
+    fi
+    echo "${dev}"
+}
+
 # ── prompt_bootloader_choice ──────────────────────────────────────────────────
 prompt_bootloader_choice() {
     echo "" >&2
@@ -82,16 +97,17 @@ prompt_bootloader_choice() {
 
 # ── confirm_repair ────────────────────────────────────────────────────────────
 # Extended signature:
-#   $1 root_dev  $2 efi_dev  $3 fstype  $4 bootloader
-#   $5 do_initramfs  $6 do_bootloader  $7 do_fstab  $8 do_keyring
+#   $1 root_dev  $2 boot_dev  $3 efi_dev  $4 fstype  $5 bootloader
+#   $6 do_initramfs  $7 do_bootloader  $8 do_fstab  $9 do_keyring
 confirm_repair() {
-    local root="${1}" efi="${2}" fs="${3}" bl="${4}"
-    local do_ini="${5:-true}" do_bl="${6:-true}"
-    local do_fs="${7:-true}" do_kr="${8:-false}"
+    local root="${1}" boot="${2}" efi="${3}" fs="${4}" bl="${5}"
+    local do_ini="${6:-true}" do_bl="${7:-true}"
+    local do_fs="${8:-true}" do_kr="${9:-false}"
 
     echo "" >&2
     _c_bold; printf "  ══ RECOVERY PLAN ══════════════════════════════\n" >&2; _c_reset
     printf "  Root device    : %s\n" "${root}" >&2
+    printf "  Boot device    : %s\n" "${boot}" >&2
     printf "  EFI device     : %s\n" "${efi}"  >&2
     printf "  Filesystem     : %s\n" "${fs}"   >&2
     printf "  Bootloader     : %s\n" "${bl}"   >&2
@@ -100,6 +116,8 @@ confirm_repair() {
 
     local step=1
     printf "    %d. Mount root at %s\n" $((step++)) "${MOUNT_ROOT}" >&2
+    [[ "${boot}" != "none" && -n "${boot}" ]] && \
+        printf "    %d. Mount /boot partition\n" $((step++)) >&2
     [[ "${efi}" != "none" && -n "${efi}" ]] && \
         printf "    %d. Mount EFI partition\n" $((step++)) >&2
     printf "    %d. Bind-mount /dev /proc /sys /run\n" $((step++)) >&2

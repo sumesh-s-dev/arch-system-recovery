@@ -62,5 +62,40 @@ mkdir -p "${FAKE_ROOT}/boot"
 result="$(detect_bootloader "${FAKE_ROOT}" 2>/dev/null)"
 assert_eq "${result}" "unknown" "detect_bootloader returns unknown"
 
+# ── fstab-backed boot / EFI detection ────────────────────────────────────────
+rm -rf "${FAKE_ROOT}"
+FAKE_ROOT="$(mktemp -d /tmp/fake-root.XXXXXX)"
+mkdir -p "${FAKE_ROOT}/etc"
+cat > "${FAKE_ROOT}/etc/fstab" <<'EOF'
+UUID=root-uuid / ext4 defaults 0 1
+UUID=boot-uuid /boot ext4 defaults 0 2
+UUID=efi-uuid /boot/efi vfat defaults 0 2
+EOF
+
+make_mock blkid '
+case "$*" in
+  "-U boot-uuid") echo "/dev/sdb1"; exit 0 ;;
+  "-U efi-uuid")  echo "/dev/sdb2"; exit 0 ;;
+  "-s TYPE -o value /dev/sdb1") echo "ext4"; exit 0 ;;
+  "-s TYPE -o value /dev/sdb2") echo "vfat"; exit 0 ;;
+  "-s PART_ENTRY_TYPE -o value /dev/sdb1") echo ""; exit 0 ;;
+  "-s PART_ENTRY_TYPE -o value /dev/sdb2") echo "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"; exit 0 ;;
+  "-s UUID -o value /dev/sdb1") echo "boot-uuid"; exit 0 ;;
+  "-s UUID -o value /dev/sdb2") echo "efi-uuid"; exit 0 ;;
+  *) exit 1 ;;
+esac'
+source "${REPO_ROOT}/lib/detect.sh"
+
+result="$(detect_boot_device "${FAKE_ROOT}" 2>/dev/null)"
+assert_eq "${result}" "/dev/sdb1" "detect_boot_device resolves /boot from fstab"
+
+result="$(detect_fstab_efi_mountpoint "${FAKE_ROOT}" 2>/dev/null)"
+assert_eq "${result}" "/boot/efi" "detect_fstab_efi_mountpoint prefers /boot/efi"
+
+result="$(detect_fstab_efi_device "${FAKE_ROOT}" 2>/dev/null)"
+assert_eq "${result}" "/dev/sdb2" "detect_fstab_efi_device resolves EFI device from fstab"
+
+assert_true "device_matches_spec matches UUID entries" device_matches_spec "/dev/sdb1" "UUID=boot-uuid"
+
 rm -rf "${MOCK_DIR}" "${FAKE_ROOT}" "${LOG_FILE}"
 test_summary

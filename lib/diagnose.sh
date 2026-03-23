@@ -83,6 +83,7 @@ diagnose_main() {
         (( issues++ )) || true
     elif mount_root_at "${tmp_mount}" "${mapped_root}" "${fstype}" ro 2>/dev/null; then
         _d_ok "Root partition mounts successfully (read-only)"
+        validate_mounted_root "${tmp_mount}" "${mapped_root}" false 2>/dev/null || true
         mounted=true
     else
         _d_issue "Root partition failed to mount — filesystem may be corrupted"
@@ -91,6 +92,17 @@ diagnose_main() {
     fi
 
     if ${mounted}; then
+        local boot_dev
+        boot_dev="$(detect_boot_device "${tmp_mount}" 2>/dev/null || true)"
+        if [[ -n "${boot_dev}" ]]; then
+            if mount_boot_at "${tmp_mount}" "${boot_dev}" ro 2>/dev/null; then
+                _d_ok "Mounted separate /boot from ${boot_dev}"
+            else
+                _d_issue "Could not mount the /boot partition from /etc/fstab"
+                (( issues++ )) || true
+            fi
+        fi
+
         # ── Kernel check ──────────────────────────────────────────────────────
         _d_section "Kernel Images"
         local kernels
@@ -137,6 +149,9 @@ diagnose_main() {
         # ── Bootloader check ──────────────────────────────────────────────────
         _d_section "Bootloader"
         local tmp_efi=""
+        if [[ -z "${efi_dev}" ]]; then
+            efi_dev="$(auto_detect_efi "${tmp_mount}" 2>/dev/null || true)"
+        fi
         if [[ -n "${efi_dev}" ]] && [[ -b "${efi_dev}" ]]; then
             tmp_efi="$(_resolve_efi_target "${tmp_mount}")"
             mount_efi_at "${tmp_mount}" "${efi_dev}" ro 2>/dev/null || tmp_efi=""

@@ -22,6 +22,14 @@ run_health_check() {
         die "Root filesystem not mounted at ${MOUNT_ROOT}. Mount it first."
     fi
 
+    local boot_dev
+    boot_dev="$(detect_boot_device "${MOUNT_ROOT}" 2>/dev/null || true)"
+    if [[ -n "${boot_dev}" ]] && ! mountpoint -q "${MOUNT_ROOT}/boot" 2>/dev/null; then
+        _hc_fail "Separate /boot partition is expected but not mounted" \
+                 "Mount ${boot_dev} at ${MOUNT_ROOT}/boot and re-run the health check"
+        (( fail++ )) || true
+    fi
+
     # ── Kernel images ──────────────────────────────────────────────────────────
     _hc_section "Kernel"
     local kernels

@@ -89,6 +89,51 @@ _mount_ext4() {
 # ── mount_efi ─────────────────────────────────────────────────────────────────
 # Mounts <efi_dev> at the EFI location inside the chroot.
 # Detects whether the system uses /boot/efi or /boot as the EFI mountpoint.
+mount_boot() {
+    local boot_dev="${1:?mount_boot requires a boot device}"
+    local mode="${2:-rw}"
+    mount_boot_at "${MOUNT_ROOT}" "${boot_dev}" "${mode}"
+}
+
+# ── mount_boot_at ─────────────────────────────────────────────────────────────
+# Mounts a separate /boot partition inside the specified root.
+mount_boot_at() {
+    local root="${1:?mount_boot_at requires a root}"
+    local boot_dev="${2:?mount_boot_at requires a boot device}"
+    local mode="${3:-rw}"
+    local target="${root}/boot"
+    local fstype
+
+    log "Mounting /boot partition ${boot_dev} → ${target}"
+    mkdir -p "${target}"
+
+    if mountpoint -q "${target}" 2>/dev/null; then
+        log "  ${target} already mounted; skipping."
+        return 0
+    fi
+
+    fstype="$(blkid -s TYPE -o value "${boot_dev}" 2>/dev/null || true)"
+    case "${fstype}" in
+        btrfs)
+            mount -t btrfs -o "${mode},compress=zstd,noatime" \
+                "${boot_dev}" "${target}" \
+                >> "${LOG_FILE}" 2>&1 \
+                || die "Failed to mount /boot BTRFS partition ${boot_dev}"
+            ;;
+        *)
+            mount -t auto -o "${mode},relatime" \
+                "${boot_dev}" "${target}" \
+                >> "${LOG_FILE}" 2>&1 \
+                || die "Failed to mount /boot partition ${boot_dev}"
+            ;;
+    esac
+
+    log "/boot partition mounted at ${target}"
+}
+
+# ── mount_efi ─────────────────────────────────────────────────────────────────
+# Mounts <efi_dev> at the EFI location inside the chroot.
+# Detects whether the system uses /boot/efi or /boot as the EFI mountpoint.
 mount_efi() {
     local efi_dev="${1:?mount_efi requires an EFI device}"
     local mode="${2:-rw}"

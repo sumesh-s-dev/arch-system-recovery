@@ -24,6 +24,10 @@ complete -c arch-recovery -l root -r \
     -d "Root partition" \
     -a "(__arch_recovery_devices)"
 
+complete -c arch-recovery -l boot -r \
+    -d "Separate /boot partition" \
+    -a "(__arch_recovery_devices)"
+
 complete -c arch-recovery -l efi -r \
     -d "EFI partition" \
     -a "(__arch_recovery_devices)"
@@ -38,6 +42,9 @@ complete -c arch-recovery -l setup-network  -d "Configure network first"
 # ── BTRFS snapshot flags ──────────────────────────────────────────────────────
 complete -c arch-recovery -l list-snapshots -d "List BTRFS snapshots"
 complete -c arch-recovery -l rollback -r    -d "Roll back to named BTRFS snapshot"
+complete -c arch-recovery -l health-check   -d "Verify system readiness without repairing"
+complete -c arch-recovery -l update         -d "Install the latest verified release bundle"
+complete -c arch-recovery -l check-update   -d "Check for a newer release"
 
 # ── Verbosity flags ───────────────────────────────────────────────────────────
 complete -c arch-recovery -l log-level -r \

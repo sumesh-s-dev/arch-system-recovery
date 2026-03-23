@@ -163,8 +163,12 @@ _wifi_via_wpa() {
     read -rs passphrase; echo "" >&2
 
     local conf
-    conf="$(mktemp /tmp/wpa-$$.conf)"
-    wpa_passphrase "${ssid}" "${passphrase}" > "${conf}" 2>/dev/null
+    conf="$(mktemp /tmp/wpa-XXXXXX.conf)" || return 1
+    chmod 600 "${conf}" 2>/dev/null || true
+    wpa_passphrase "${ssid}" "${passphrase}" > "${conf}" 2>/dev/null || {
+        rm -f "${conf}"
+        return 1
+    }
     wpa_supplicant -B -i "${iface}" -c "${conf}" >> "${LOG_FILE}" 2>&1 || {
         rm -f "${conf}"; return 1
     }

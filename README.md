@@ -81,6 +81,9 @@ sudo ./bin/arch-recovery --diagnose
 
 # Fully automated repair
 sudo ./bin/arch-recovery --auto
+
+# Systems with a separate /boot partition
+sudo ./bin/arch-recovery --root /dev/sda2 --boot /dev/sda1 --efi /dev/sda3
 ```
 
 ---
@@ -118,6 +121,7 @@ Auto-detects everything. Skips confirmation. Suitable for scripts.
 ```bash
 sudo arch-recovery --auto
 sudo arch-recovery --auto --root /dev/nvme0n1p2 --efi /dev/nvme0n1p1
+sudo arch-recovery --auto --root /dev/sda2 --boot /dev/sda1 --efi /dev/sda3
 ```
 
 ### Dry run — preview without writing anything
@@ -185,9 +189,13 @@ locale, timezone, pacman database presence.
 # Check if a newer release exists
 sudo arch-recovery --check-update
 
-# Download and install latest release from GitHub
+# Download and install the latest verified release bundle
 sudo arch-recovery --update
 ```
+
+Build release assets with `make dist` and upload both files from `dist/`:
+- `arch-system-recovery-vX.Y.Z.tar.gz`
+- `arch-system-recovery-vX.Y.Z.tar.gz.sha256`
 
 ---
 

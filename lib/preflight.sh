@@ -10,6 +10,8 @@ run_preflight() {
     local root="${1}"
     local efi="${2:-}"
     local fstype="${3}"
+    local boot_dev=""
+    local efi_mountpoint=""
     local warnings=0 errors=0
 
     log "Running pre-flight checks..."
@@ -28,11 +30,31 @@ run_preflight() {
         (( warnings++ )) || true
     fi
 
+    # ── Check: separate /boot mounted when expected ───────────────────────────
+    boot_dev="$(detect_boot_device "${MOUNT_ROOT}" 2>/dev/null || true)"
+    if [[ -n "${boot_dev}" ]]; then
+        if mountpoint -q "${MOUNT_ROOT}/boot" 2>/dev/null; then
+            _pf_ok "Separate /boot partition mounted"
+        else
+            _pf_err "/boot exists in /etc/fstab but is not mounted" \
+                    "Mount the /boot device before rebuilding initramfs or the bootloader"
+            (( errors++ )) || true
+        fi
+    fi
+
     # ── Check: EFI partition mounted (if UEFI) ────────────────────────────────
-    if [[ -n "${efi}" ]]; then
-        if mountpoint -q "${MOUNT_ROOT}/boot/efi" 2>/dev/null || \
-           mountpoint -q "${MOUNT_ROOT}/boot"     2>/dev/null || \
-           mountpoint -q "${MOUNT_ROOT}/efi"      2>/dev/null; then
+    efi_mountpoint="$(detect_fstab_efi_mountpoint "${MOUNT_ROOT}" 2>/dev/null || true)"
+    if [[ -n "${efi}" || -n "${efi_mountpoint}" ]]; then
+        if [[ -z "${efi_mountpoint}" ]]; then
+            if mountpoint -q "${MOUNT_ROOT}/boot/efi" 2>/dev/null || \
+               mountpoint -q "${MOUNT_ROOT}/efi"      2>/dev/null || \
+               [[ "$(findmnt -n -o FSTYPE "${MOUNT_ROOT}/boot" 2>/dev/null || true)" == "vfat" ]]; then
+                _pf_ok "EFI partition mounted"
+            else
+                _pf_warn "EFI partition not yet mounted"
+                (( warnings++ )) || true
+            fi
+        elif mountpoint -q "${MOUNT_ROOT}${efi_mountpoint}" 2>/dev/null; then
             _pf_ok  "EFI partition mounted"
         else
             _pf_warn "EFI partition not yet mounted"

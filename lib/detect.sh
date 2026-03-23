@@ -5,49 +5,348 @@ set -euo pipefail
 
 # ── Root partition auto-detection ─────────────────────────────────────────────
 # Searches block devices for a likely Arch Linux root partition.
-# Heuristics (in order):
-#   1. Partition with PARTLABEL="root" or LABEL="arch" / "archlinux"
-#   2. First ext4 or BTRFS partition ≥ 4 GiB that is not an EFI partition
+# Heuristics (weighted):
+#   1. PARTLABEL/LABEL hints such as root / arch / archlinux
+#   2. Read-only probe that looks like an Arch-style installed system
+#   3. Supported filesystem/container type and plausible disk size
 # Returns the device path (e.g. /dev/sda2) or exits with an error.
 auto_detect_root() {
     log "Auto-detecting root partition..."
 
-    local dev
-    # Priority 1: explicit labels
-    for label in arch archlinux root; do
-        dev="$(blkid -L "${label}" 2>/dev/null || true)"
-        if [[ -n "${dev}" ]]; then
-            log "  Found root via label '${label}': ${dev}"
-            echo "${dev}"
-            return 0
+    local -a candidates=()
+    local candidate
+    local best_dev=""
+    local best_score=-1
+
+    while IFS= read -r candidate; do
+        local seen=false
+        local existing
+        [[ -n "${candidate}" ]] || continue
+        for existing in "${candidates[@]:-}"; do
+            if [[ "${existing}" == "${candidate}" ]]; then
+                seen=true
+                break
+            fi
+        done
+        ${seen} || candidates+=("${candidate}")
+    done < <(
+        for label in arch archlinux root; do
+            blkid -L "${label}" 2>/dev/null || true
+        done
+        blkid -t PARTLABEL=root -o device 2>/dev/null || true
+        lsblk -dpno NAME,TYPE | awk '$2=="part"{print $1}' | sort
+    )
+
+    for candidate in "${candidates[@]}"; do
+        local score
+        score="$(_score_root_candidate "${candidate}")"
+        vlog "  Candidate ${candidate}: score=${score}"
+        if (( score > best_score )); then
+            best_score="${score}"
+            best_dev="${candidate}"
         fi
     done
 
-    # Priority 2: PARTLABEL=root
-    dev="$(blkid -t PARTLABEL=root -o device 2>/dev/null | head -n1 || true)"
-    if [[ -n "${dev}" ]]; then
-        log "  Found root via PARTLABEL=root: ${dev}"
-        echo "${dev}"
+    if [[ -n "${best_dev}" && ${best_score} -ge 6 ]]; then
+        log "  Auto-detected root: ${best_dev} (score=${best_score})"
+        echo "${best_dev}"
         return 0
     fi
 
-    # Priority 3: first ext4 / BTRFS partition that is NOT type EF00 (EFI)
-    while IFS= read -r candidate; do
-        local fstype
-        fstype="$(blkid -s TYPE -o value "${candidate}" 2>/dev/null || true)"
-        if [[ "${fstype}" == "ext4" || "${fstype}" == "btrfs" ]]; then
-            local parttype
-            parttype="$(blkid -s PART_ENTRY_TYPE -o value "${candidate}" 2>/dev/null || true)"
-            # Skip EFI System Partition (type GUID)
-            if [[ "${parttype}" != "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" ]]; then
-                log "  Auto-detected root (heuristic): ${candidate} [${fstype}]"
-                echo "${candidate}"
-                return 0
-            fi
-        fi
-    done < <(lsblk -dpno NAME,TYPE | awk '$2=="part"{print $1}' | sort)
-
     die "Could not auto-detect root partition. Use --root <device> to specify it."
+}
+
+_score_root_candidate() {
+    local dev="${1:?_score_root_candidate requires a device}"
+    local fstype parttype label partlabel size score=0 probe_score=0
+
+    [[ -b "${dev}" ]] || { echo 0; return 0; }
+
+    fstype="$(blkid -s TYPE -o value "${dev}" 2>/dev/null || true)"
+    parttype="$(blkid -s PART_ENTRY_TYPE -o value "${dev}" 2>/dev/null || true)"
+    label="$(blkid -s LABEL -o value "${dev}" 2>/dev/null || true)"
+    partlabel="$(blkid -s PARTLABEL -o value "${dev}" 2>/dev/null || true)"
+    size="$(lsblk -bdno SIZE "${dev}" 2>/dev/null || echo 0)"
+
+    # Skip obvious EFI partitions unless they are mislabeled containers.
+    if [[ "${parttype}" == "$(_efi_parttype_guid)" && "${fstype}" != "crypto_LUKS" ]]; then
+        echo 0
+        return 0
+    fi
+
+    case "${fstype}" in
+        btrfs|ext4)
+            score=$(( score + 5 ))
+            probe_score="$(_probe_root_candidate "${dev}" "${fstype}")"
+            score=$(( score + probe_score ))
+            ;;
+        crypto_LUKS|LVM2_member)
+            score=$(( score + 3 ))
+            ;;
+        *)
+            echo 0
+            return 0
+            ;;
+    esac
+
+    case "${label,,}:${partlabel,,}" in
+        arch:*|archlinux:*|root:*|*:arch|*:archlinux|*:root)
+            score=$(( score + 8 ))
+            ;;
+        *)
+            ;;
+    esac
+
+    if [[ "${size}" =~ ^[0-9]+$ ]]; then
+        (( size >= 8 * 1024 * 1024 * 1024 )) && score=$(( score + 1 ))
+        (( size >= 32 * 1024 * 1024 * 1024 )) && score=$(( score + 1 ))
+    fi
+
+    echo "${score}"
+}
+
+_probe_root_candidate() {
+    local dev="${1:?_probe_root_candidate requires a device}"
+    local fstype="${2:?_probe_root_candidate requires a filesystem type}"
+    local tmpdir score=0 os_id=""
+    tmpdir="$(mktemp -d /tmp/root-probe.XXXXXX)"
+
+    if ! _mount_probe_root "${dev}" "${fstype}" "${tmpdir}"; then
+        rmdir "${tmpdir}" 2>/dev/null || true
+        echo 0
+        return 0
+    fi
+
+    [[ -d "${tmpdir}/etc" ]] && score=$(( score + 2 ))
+    [[ -f "${tmpdir}/etc/fstab" ]] && score=$(( score + 4 ))
+    [[ -d "${tmpdir}/var/lib/pacman" ]] && score=$(( score + 2 ))
+    [[ -d "${tmpdir}/boot" ]] && score=$(( score + 1 ))
+
+    if [[ -f "${tmpdir}/etc/os-release" ]]; then
+        os_id="$(
+            awk -F= '$1=="ID"{gsub(/"/, "", $2); print tolower($2)}' \
+                "${tmpdir}/etc/os-release" 2>/dev/null | head -1
+        )"
+        case "${os_id}" in
+            arch|manjaro|endeavouros)
+                score=$(( score + 4 ))
+                ;;
+        esac
+    fi
+
+    umount -l "${tmpdir}" 2>/dev/null || true
+    rmdir "${tmpdir}" 2>/dev/null || true
+    echo "${score}"
+}
+
+_mount_probe_root() {
+    local dev="${1:?_mount_probe_root requires a device}"
+    local fstype="${2:?_mount_probe_root requires a filesystem type}"
+    local target="${3:?_mount_probe_root requires a target}"
+    local subvol
+
+    case "${fstype}" in
+        btrfs)
+            subvol="$(detect_btrfs_subvol "${dev}")"
+            if [[ -n "${subvol}" ]]; then
+                mount -t btrfs -o "subvol=${subvol},ro,compress=zstd,noatime" \
+                    "${dev}" "${target}" 2>/dev/null
+            else
+                mount -t btrfs -o "subvolid=5,ro,compress=zstd,noatime" \
+                    "${dev}" "${target}" 2>/dev/null
+            fi
+            ;;
+        ext4)
+            mount -t ext4 -o ro,relatime "${dev}" "${target}" 2>/dev/null
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+_efi_parttype_guid() {
+    echo "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+}
+
+_fstab_spec_for_mountpoint() {
+    local root="${1:?_fstab_spec_for_mountpoint requires a root path}"
+    local mountpoint="${2:?_fstab_spec_for_mountpoint requires a mountpoint}"
+    local fstab="${root}/etc/fstab"
+
+    [[ -f "${fstab}" ]] || return 1
+    awk -v mp="${mountpoint}" '
+        /^[[:space:]]*#/ {next}
+        NF >= 2 && $2 == mp {print $1; exit}
+    ' "${fstab}"
+}
+
+resolve_device_spec() {
+    local spec="${1:?resolve_device_spec requires a device spec}"
+
+    case "${spec}" in
+        UUID=*)
+            blkid -U "${spec#UUID=}" 2>/dev/null || true
+            ;;
+        PARTUUID=*)
+            blkid -t "PARTUUID=${spec#PARTUUID=}" -o device 2>/dev/null | head -n1 || true
+            ;;
+        LABEL=*)
+            blkid -L "${spec#LABEL=}" 2>/dev/null || true
+            ;;
+        PARTLABEL=*)
+            blkid -t "PARTLABEL=${spec#PARTLABEL=}" -o device 2>/dev/null | head -n1 || true
+            ;;
+        /dev/*)
+            [[ -e "${spec}" ]] && echo "${spec}" || true
+            ;;
+        *)
+            true
+            ;;
+    esac
+}
+
+device_matches_spec() {
+    local dev="${1:?device_matches_spec requires a device}"
+    local spec="${2:?device_matches_spec requires a spec}"
+    local expected resolved_dev uuid partuuid label partlabel
+
+    expected="$(resolve_device_spec "${spec}")"
+    if [[ -n "${expected}" ]]; then
+        [[ "$(readlink -f "${dev}" 2>/dev/null || echo "${dev}")" == \
+           "$(readlink -f "${expected}" 2>/dev/null || echo "${expected}")" ]] && return 0
+    fi
+
+    case "${spec}" in
+        UUID=*)
+            uuid="$(blkid -s UUID -o value "${dev}" 2>/dev/null || true)"
+            [[ "${uuid}" == "${spec#UUID=}" ]]
+            ;;
+        PARTUUID=*)
+            partuuid="$(blkid -s PARTUUID -o value "${dev}" 2>/dev/null || true)"
+            [[ "${partuuid}" == "${spec#PARTUUID=}" ]]
+            ;;
+        LABEL=*)
+            label="$(blkid -s LABEL -o value "${dev}" 2>/dev/null || true)"
+            [[ "${label}" == "${spec#LABEL=}" ]]
+            ;;
+        PARTLABEL=*)
+            partlabel="$(blkid -s PARTLABEL -o value "${dev}" 2>/dev/null || true)"
+            [[ "${partlabel}" == "${spec#PARTLABEL=}" ]]
+            ;;
+        /dev/*)
+            [[ "$(readlink -f "${dev}" 2>/dev/null || echo "${dev}")" == \
+               "$(readlink -f "${spec}" 2>/dev/null || echo "${spec}")" ]]
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+detect_boot_device() {
+    local root="${1:-${MOUNT_ROOT}}"
+    local spec dev fstype parttype
+
+    spec="$(_fstab_spec_for_mountpoint "${root}" "/boot" 2>/dev/null || true)"
+    [[ -n "${spec}" ]] || { echo ""; return 0; }
+
+    dev="$(resolve_device_spec "${spec}")"
+    [[ -n "${dev}" ]] || { echo ""; return 0; }
+
+    fstype="$(blkid -s TYPE -o value "${dev}" 2>/dev/null || true)"
+    parttype="$(blkid -s PART_ENTRY_TYPE -o value "${dev}" 2>/dev/null || true)"
+
+    # If /boot is actually the ESP, let EFI detection handle it.
+    if [[ "${fstype}" == "vfat" || "${parttype}" == "$(_efi_parttype_guid)" ]]; then
+        echo ""
+        return 0
+    fi
+
+    log "Detected /boot device from fstab: ${dev}"
+    echo "${dev}"
+}
+
+detect_fstab_efi_device() {
+    local root="${1:-${MOUNT_ROOT}}"
+    local spec dev candidate mp
+
+    mp="$(detect_fstab_efi_mountpoint "${root}")"
+    [[ -n "${mp}" ]] || { echo ""; return 0; }
+
+    spec="$(_fstab_spec_for_mountpoint "${root}" "${mp}" 2>/dev/null || true)"
+    dev="$(resolve_device_spec "${spec}")"
+    [[ -n "${dev}" ]] || { echo ""; return 0; }
+
+    log "Detected EFI device from fstab (${mp}): ${dev}"
+    echo "${dev}"
+}
+
+detect_fstab_efi_mountpoint() {
+    local root="${1:-${MOUNT_ROOT}}"
+    local spec dev candidate mp
+
+    for mp in /boot/efi /efi /boot; do
+        spec="$(_fstab_spec_for_mountpoint "${root}" "${mp}" 2>/dev/null || true)"
+        [[ -n "${spec}" ]] || continue
+
+        dev="$(resolve_device_spec "${spec}")"
+        [[ -n "${dev}" ]] || {
+            [[ "${mp}" != "/boot" ]] && { echo "${mp}"; return 0; }
+            continue
+        }
+
+        if [[ "${mp}" == "/boot" ]]; then
+            candidate="$(blkid -s TYPE -o value "${dev}" 2>/dev/null || true)"
+            [[ "${candidate}" == "vfat" || \
+               "$(blkid -s PART_ENTRY_TYPE -o value "${dev}" 2>/dev/null || true)" == "$(_efi_parttype_guid)" ]] || continue
+        fi
+
+        echo "${mp}"
+        return 0
+    done
+
+    echo ""
+}
+
+validate_mounted_root() {
+    local root="${1:-${MOUNT_ROOT}}"
+    local mapped_root="${2:-}"
+    local strict="${3:-false}"
+    local root_spec
+
+    [[ -d "${root}/etc" ]] || die "Mounted root at ${root} does not contain /etc."
+
+    if [[ ! -f "${root}/etc/fstab" ]]; then
+        ${strict} && die "Mounted root at ${root} does not contain /etc/fstab. Use --root to specify the correct device."
+        warn "Mounted root at ${root} does not contain /etc/fstab."
+        return 0
+    fi
+
+    root_spec="$(_fstab_spec_for_mountpoint "${root}" "/" 2>/dev/null || true)"
+    if [[ -n "${mapped_root}" && -n "${root_spec}" ]] && ! device_matches_spec "${mapped_root}" "${root_spec}"; then
+        die "Mounted root does not match the / entry in /etc/fstab (${root_spec})."
+    fi
+}
+
+validate_mountpoint_device() {
+    local root="${1:-${MOUNT_ROOT}}"
+    local mountpoint="${2:?validate_mountpoint_device requires a mountpoint}"
+    local selected_dev="${3:-}"
+    local label="${4:-device}"
+    local expected_spec expected_dev
+
+    expected_spec="$(_fstab_spec_for_mountpoint "${root}" "${mountpoint}" 2>/dev/null || true)"
+    [[ -n "${expected_spec}" ]] || return 0
+
+    expected_dev="$(resolve_device_spec "${expected_spec}")"
+    [[ -n "${expected_dev}" ]] || return 0
+
+    [[ -n "${selected_dev}" ]] || \
+        die "The mounted system expects ${mountpoint} to use ${expected_spec}, but no ${label} was selected."
+
+    device_matches_spec "${selected_dev}" "${expected_spec}" || \
+        die "Selected ${label} ${selected_dev} does not match ${mountpoint} in /etc/fstab (${expected_spec})."
 }
 
 # ── Filesystem detection ──────────────────────────────────────────────────────
@@ -138,13 +437,23 @@ detect_btrfs_subvol() {
 # Finds the first partition with filesystem type vfat and the EFI System
 # Partition GUID.  Returns device path or empty string if not found.
 auto_detect_efi() {
+    local root="${1:-}"
     log "Auto-detecting EFI partition..."
+
+    if [[ -n "${root}" && -f "${root}/etc/fstab" ]]; then
+        local fstab_dev
+        fstab_dev="$(detect_fstab_efi_device "${root}")"
+        if [[ -n "${fstab_dev}" ]]; then
+            echo "${fstab_dev}"
+            return 0
+        fi
+    fi
 
     local dev
     dev="$(blkid -t TYPE=vfat -o device 2>/dev/null \
            | while read -r candidate; do
                pt="$(blkid -s PART_ENTRY_TYPE -o value "${candidate}" 2>/dev/null || true)"
-               if [[ "${pt}" == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" ]]; then
+               if [[ "${pt}" == "$(_efi_parttype_guid)" ]]; then
                    echo "${candidate}"
                    break
                fi

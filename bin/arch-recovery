@@ -32,6 +32,7 @@ DRY_RUN=false
 TUI_MODE=false
 DIAGNOSE_MODE=false
 ROOT_DEVICE=""
+BOOT_DEVICE=""
 EFI_DEVICE=""
 LOG_LEVEL="normal"      # silent | normal | verbose | debug
 DO_INITRAMFS=true
@@ -45,6 +46,7 @@ DO_HEALTH_CHECK=false
 HEALTH_CHECK_ONLY=false
 DO_UPDATE=false
 CHECK_UPDATE_ONLY=false
+ROOT_AUTO_DETECTED=false
 
 # ── Safety trap ───────────────────────────────────────────────────────────────
 _on_exit() {
@@ -71,6 +73,7 @@ parse_args() {
             --tui)             TUI_MODE=true; HEALTH_CHECK_ONLY=false; shift ;;
             --diagnose)        DIAGNOSE_MODE=true; HEALTH_CHECK_ONLY=false; shift ;;
             --root)            ROOT_DEVICE="${2:?--root requires a device}"; shift 2 ;;
+            --boot)            BOOT_DEVICE="${2:?--boot requires a device}"; shift 2 ;;
             --efi)             EFI_DEVICE="${2:?--efi requires a device}";   shift 2 ;;
             --no-initramfs)    DO_INITRAMFS=false; HEALTH_CHECK_ONLY=false; shift ;;
             --no-bootloader)   DO_BOOTLOADER=false; HEALTH_CHECK_ONLY=false; shift ;;
@@ -119,6 +122,7 @@ $(printf '\033[1m')MODES$(printf '\033[0m')
 
 $(printf '\033[1m')DEVICES$(printf '\033[0m')
     --root <dev>        Root partition  e.g. /dev/sda2  /dev/nvme0n1p2
+    --boot <dev>        Separate /boot partition if present
     --efi  <dev>        EFI  partition  e.g. /dev/sda1  /dev/nvme0n1p1
 
 $(printf '\033[1m')REPAIRS$(printf '\033[0m') (all on by default unless opted out)
@@ -159,7 +163,7 @@ $(printf '\033[1m')EXAMPLES$(printf '\033[0m')
     sudo arch-recovery --diagnose                   # what's broken?
     sudo arch-recovery --auto                       # fix everything automatically
     sudo arch-recovery --dry-run --verbose          # preview in full detail
-    sudo arch-recovery --root /dev/sda2 --efi /dev/sda1
+    sudo arch-recovery --root /dev/sda2 --boot /dev/sda1 --efi /dev/sda3
     sudo arch-recovery --auto --repair-keyring
     sudo arch-recovery --list-snapshots --root /dev/sda2
     sudo arch-recovery --rollback @2024-01-15 --root /dev/sda2
@@ -171,6 +175,18 @@ EOF
 _show_changelog() {
     cat <<'EOF'
 CHANGELOG
+
+v1.1.1
+  + Added explicit --boot support for systems with a separate /boot partition
+  + Strengthened root / boot / EFI auto-detection using mounted fstab ownership checks
+  + Diagnose and health-check now mount separate /boot layouts read-only when needed
+  + Self-update now installs only verified release bundles (.tar.gz + .sha256)
+  + Added make dist for release bundle generation and checksum publication
+  + TUI and CLI completion metadata updated for new flags
+  + Fixed release bundle naming so published assets match the updater contract
+  + Auto mode now fails fast instead of prompting when bootloader detection is unknown
+  + Fixed the wpa_supplicant fallback temp-file path and tightened its temp-file permissions
+  + Snapshot rollback now rejects unsafe snapshot names before touching the filesystem
 
 v1.1.0
   + TUI full-screen menu (--tui) with whiptail/dialog, pure-bash fallback
@@ -192,6 +208,61 @@ v1.0.0
   + Initial release
   + BTRFS / ext4, LUKS, GRUB (UEFI), systemd-boot
 EOF
+}
+
+_fstab_expects_separate_boot() {
+    local root="${1:-${MOUNT_ROOT}}"
+    local boot_spec boot_dev boot_type boot_parttype
+
+    boot_spec="$(_fstab_spec_for_mountpoint "${root}" "/boot" 2>/dev/null || true)"
+    [[ -n "${boot_spec}" ]] || return 1
+
+    boot_dev="$(resolve_device_spec "${boot_spec}")"
+    [[ -n "${boot_dev}" ]] || return 0
+
+    boot_type="$(blkid -s TYPE -o value "${boot_dev}" 2>/dev/null || true)"
+    boot_parttype="$(blkid -s PART_ENTRY_TYPE -o value "${boot_dev}" 2>/dev/null || true)"
+
+    [[ "${boot_type}" == "vfat" || \
+       "${boot_parttype}" == "$(_efi_parttype_guid)" ]] && return 1
+    return 0
+}
+
+_mount_boot_layout() {
+    local mode="${1:-rw}"
+    local strict_missing="${2:-true}"
+    local allow_prompt="${3:-false}"
+    local efi_mountpoint=""
+
+    if [[ -z "${BOOT_DEVICE}" ]]; then
+        BOOT_DEVICE="$(detect_boot_device "${MOUNT_ROOT}")"
+        if [[ -z "${BOOT_DEVICE}" ]] && ${allow_prompt} && _fstab_expects_separate_boot "${MOUNT_ROOT}"; then
+            BOOT_DEVICE="$(prompt_boot_device)"
+        fi
+    fi
+
+    if [[ -n "${BOOT_DEVICE}" ]]; then
+        mount_boot "${BOOT_DEVICE}" "${mode}"
+        validate_mountpoint_device "${MOUNT_ROOT}" "/boot" "${BOOT_DEVICE}" "/boot device"
+    elif ${strict_missing} && _fstab_expects_separate_boot "${MOUNT_ROOT}"; then
+        die "The mounted system expects a separate /boot partition. Use --boot <device>."
+    fi
+
+    efi_mountpoint="$(detect_fstab_efi_mountpoint "${MOUNT_ROOT}")"
+    if [[ -z "${EFI_DEVICE}" ]]; then
+        EFI_DEVICE="$(auto_detect_efi "${MOUNT_ROOT}")"
+        if [[ -z "${EFI_DEVICE}" && -n "${efi_mountpoint}" && ${allow_prompt} ]]; then
+            EFI_DEVICE="$(prompt_efi_device)"
+        fi
+    fi
+
+    if [[ -n "${EFI_DEVICE}" ]]; then
+        mount_efi "${EFI_DEVICE}" "${mode}"
+        [[ -n "${efi_mountpoint}" ]] && \
+            validate_mountpoint_device "${MOUNT_ROOT}" "${efi_mountpoint}" "${EFI_DEVICE}" "EFI device"
+    elif ${strict_missing} && [[ -n "${efi_mountpoint}" ]]; then
+        die "The mounted system expects an EFI partition at ${efi_mountpoint}. Use --efi <device>."
+    fi
 }
 
 # ── Main orchestration ────────────────────────────────────────────────────────
@@ -269,6 +340,9 @@ main() {
     print_step "1" "Identify root partition"
     if [[ -z "${ROOT_DEVICE}" ]]; then
         ROOT_DEVICE="$(${AUTO_MODE} && auto_detect_root || prompt_root_device)"
+        ROOT_AUTO_DETECTED=true
+    else
+        ROOT_AUTO_DETECTED=false
     fi
     log "Root device     : ${ROOT_DEVICE}"
 
@@ -309,16 +383,20 @@ main() {
         log "[dry-run] Would mount ${MAPPED_ROOT} (${FS_TYPE}) at ${MOUNT_ROOT}"
     else
         mount_root "${MAPPED_ROOT}" "${FS_TYPE}"
+        validate_mounted_root "${MOUNT_ROOT}" "${MAPPED_ROOT}" "${ROOT_AUTO_DETECTED}"
     fi
 
-    # ── EFI ───────────────────────────────────────────────────────────────────
-    print_step "5" "EFI partition"
-    if [[ -z "${EFI_DEVICE}" ]]; then
-        EFI_DEVICE="$(${AUTO_MODE} && auto_detect_efi || prompt_efi_device)"
-    fi
-    if [[ -n "${EFI_DEVICE}" ]]; then
-        ${DRY_RUN} && log "[dry-run] Would mount EFI ${EFI_DEVICE}" \
-                   || mount_efi "${EFI_DEVICE}"
+    # ── /boot + EFI ───────────────────────────────────────────────────────────
+    print_step "5" "Boot layout"
+    if ${DRY_RUN}; then
+        [[ -n "${BOOT_DEVICE}" ]] && log "[dry-run] Would mount /boot ${BOOT_DEVICE}"
+        [[ -n "${EFI_DEVICE}" ]] && log "[dry-run] Would mount EFI ${EFI_DEVICE}"
+    else
+        if ${AUTO_MODE}; then
+            _mount_boot_layout rw true false
+        else
+            _mount_boot_layout rw true true
+        fi
     fi
 
     # ── Bootloader detection ─────────────────────────────────────────────────
@@ -338,13 +416,13 @@ main() {
     # ── Confirm before destructive steps ──────────────────────────────────────
     if ! ${AUTO_MODE} && ! ${DRY_RUN}; then
         confirm_repair \
-            "${ROOT_DEVICE}" "${EFI_DEVICE:-none}" "${FS_TYPE}" \
-            "${BOOTLOADER}" "${DO_INITRAMFS}" "${DO_BOOTLOADER}" \
-            "${DO_FSTAB}" "${DO_KEYRING}"
+            "${ROOT_DEVICE}" "${BOOT_DEVICE:-none}" "${EFI_DEVICE:-none}" \
+            "${FS_TYPE}" "${BOOTLOADER}" "${DO_INITRAMFS}" \
+            "${DO_BOOTLOADER}" "${DO_FSTAB}" "${DO_KEYRING}"
     fi
 
     # Save rollback plan to log before touching anything
-    _save_rollback_plan "${ROOT_DEVICE}" "${EFI_DEVICE:-}" "${BOOTLOADER}"
+    _save_rollback_plan "${ROOT_DEVICE}" "${BOOT_DEVICE:-}" "${EFI_DEVICE:-}" "${BOOTLOADER}"
 
     # ── Pacman keyring ────────────────────────────────────────────────────────
     if ${DO_KEYRING} && ! ${DRY_RUN}; then
@@ -388,7 +466,7 @@ main() {
 
 # ── Save rollback plan ────────────────────────────────────────────────────────
 _save_rollback_plan() {
-    local root="$1" efi="${2:-}" bl="${3:-}"
+    local root="$1" boot="${2:-}" efi="${3:-}" bl="${4:-}"
     {
         echo "═══ ROLLBACK PLAN (generated $(date)) ═══"
         echo "If this recovery made things worse, here is how to undo it manually:"
@@ -396,15 +474,16 @@ _save_rollback_plan() {
         echo "1. Boot the Arch live ISO again."
         echo "2. If LUKS: cryptsetup open ${root} recovery_crypt"
         echo "3. Mount root: mount ${root} /mnt"
-        [[ -n "${efi}" ]] && echo "4. Mount EFI: mount ${efi} /mnt/boot/efi"
-        echo "5. arch-chroot /mnt"
-        echo "6. To redo initramfs: mkinitcpio -P"
+        [[ -n "${boot}" ]] && echo "4. Mount /boot: mount ${boot} /mnt/boot"
+        [[ -n "${efi}" ]] && echo "5. Mount EFI: mount ${efi} /mnt/boot/efi"
+        echo "6. arch-chroot /mnt"
+        echo "7. To redo initramfs: mkinitcpio -P"
         case "${bl}" in
             grub)
-                echo "7. To redo GRUB: grub-install --target=x86_64-efi --efi-directory=/boot/efi"
+                echo "8. To redo GRUB: grub-install --target=x86_64-efi --efi-directory=/boot/efi"
                 echo "                  grub-mkconfig -o /boot/grub/grub.cfg" ;;
             systemd-boot)
-                echo "7. To redo systemd-boot: bootctl install" ;;
+                echo "8. To redo systemd-boot: bootctl install" ;;
         esac
         echo "═══════════════════════════════════════════"
     } >> "${LOG_FILE}"
@@ -453,14 +532,11 @@ run_standalone_health_check() {
 
     print_step "HC3" "Mount root filesystem (read-only)"
     mount_root "${mapped_root}" "${fstype}" ro
+    validate_mounted_root "${MOUNT_ROOT}" "${mapped_root}" true
 
-    if [[ -z "${efi_dev}" ]]; then
-        efi_dev="$(auto_detect_efi 2>/dev/null || true)"
-    fi
-    if [[ -n "${efi_dev}" ]]; then
-        print_step "HC4" "Mount EFI partition (read-only)"
-        mount_efi "${efi_dev}" ro
-    fi
+    EFI_DEVICE="${efi_dev:-${EFI_DEVICE:-}}"
+    print_step "HC4" "Mount boot layout (read-only)"
+    _mount_boot_layout ro true true
 
     print_step "HC5" "Run health check"
     run_health_check
@@ -470,18 +546,139 @@ run_standalone_health_check() {
 
 GITHUB_REPO="sumesh-s-dev/arch-system-recovery"
 GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+RELEASE_BUNDLE_PREFIX="arch-system-recovery"
+
+_fetch_release_json() {
+    command -v curl &>/dev/null || \
+        die "Update checks require curl. Install it: pacman -S curl"
+    curl -fsSL "${GITHUB_API}" 2>/dev/null || \
+        die "Could not reach GitHub API. Check network connectivity."
+}
+
+_latest_release_tag() {
+    local release_json="${1:?_latest_release_tag requires release JSON}"
+    printf '%s\n' "${release_json}" \
+        | grep '"tag_name"' \
+        | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/' \
+        | head -1
+}
+
+_release_bundle_name() {
+    local tag="${1:?_release_bundle_name requires a tag}"
+    echo "${RELEASE_BUNDLE_PREFIX}-${tag}.tar.gz"
+}
+
+_release_bundle_checksum_name() {
+    local tag="${1:?_release_bundle_checksum_name requires a tag}"
+    echo "$(_release_bundle_name "${tag}").sha256"
+}
+
+_release_asset_url() {
+    local release_json="${1:?_release_asset_url requires release JSON}"
+    local asset_name="${2:?_release_asset_url requires an asset name}"
+
+    printf '%s\n' "${release_json}" | awk -v asset="${asset_name}" '
+        $0 ~ "\"name\": \"" asset "\"" {found=1; next}
+        found && /"browser_download_url":/ {
+            gsub(/.*"browser_download_url": *"/, "", $0)
+            gsub(/".*/, "", $0)
+            print
+            exit
+        }
+    '
+}
+
+_is_source_checkout() {
+    [[ "${LIB_DIR}" == "${REPO_ROOT}/lib" ]] && \
+        [[ -d "${REPO_ROOT}/lib" ]] && [[ -f "${REPO_ROOT}/README.md" ]]
+}
+
+_assert_clean_source_checkout() {
+    _is_source_checkout || return 0
+    command -v git &>/dev/null || die "Source checkout updates require git metadata and the git CLI."
+    git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+        || die "Source checkout updates require a real git working tree."
+    [[ -z "$(git -C "${REPO_ROOT}" status --porcelain 2>/dev/null || true)" ]] \
+        || die "Refusing to self-update with uncommitted changes in the source checkout."
+}
+
+_download_verified_release_bundle() {
+    local release_json="${1:?_download_verified_release_bundle requires release JSON}"
+    local tag="${2:?_download_verified_release_bundle requires a tag}"
+    local tmpdir="${3:?_download_verified_release_bundle requires a temp dir}"
+    local archive_name checksum_name archive_url checksum_url
+
+    archive_name="$(_release_bundle_name "${tag}")"
+    checksum_name="$(_release_bundle_checksum_name "${tag}")"
+    archive_url="$(_release_asset_url "${release_json}" "${archive_name}")"
+    checksum_url="$(_release_asset_url "${release_json}" "${checksum_name}")"
+
+    [[ -n "${archive_url}" && -n "${checksum_url}" ]] || \
+        die "Release ${tag} is missing verified update assets (${archive_name} and ${checksum_name})."
+
+    command -v tar &>/dev/null || die "Verified updates require tar."
+    command -v sha256sum &>/dev/null || die "Verified updates require sha256sum."
+
+    log "Downloading verified update bundle ${archive_name}..."
+    curl -fsSL "${archive_url}" -o "${tmpdir}/${archive_name}" \
+        || die "Failed to download ${archive_name}"
+    curl -fsSL "${checksum_url}" -o "${tmpdir}/${checksum_name}" \
+        || die "Failed to download ${checksum_name}"
+
+    (cd "${tmpdir}" && sha256sum -c "${checksum_name}") >> "${LOG_FILE}" 2>&1 \
+        || die "Checksum verification failed for ${archive_name}"
+
+    echo "${tmpdir}/${archive_name}"
+}
+
+_extract_verified_release_bundle() {
+    local archive_path="${1:?_extract_verified_release_bundle requires an archive}"
+    local tag="${2:?_extract_verified_release_bundle requires a tag}"
+    local tmpdir="${3:?_extract_verified_release_bundle requires a temp dir}"
+    local extracted_dir version
+
+    tar -xzf "${archive_path}" -C "${tmpdir}" \
+        || die "Failed to extract verified update bundle"
+
+    extracted_dir="$(find "${tmpdir}" -maxdepth 1 -type d -name 'arch-system-recovery-*' \
+        | head -1)"
+    [[ -n "${extracted_dir}" ]] || die "Could not find extracted directory in verified update bundle"
+    [[ -f "${extracted_dir}/lib/core.sh" ]] || die "Verified update bundle is missing lib/core.sh"
+
+    version="$(sed -n 's/^.*TOOLKIT_VERSION="\([^"]*\)".*/\1/p' "${extracted_dir}/lib/core.sh" \
+        | head -1)"
+    [[ "v${version}" == "${tag}" ]] || \
+        die "Verified update bundle version (${version:-unknown}) does not match release tag ${tag}"
+
+    echo "${extracted_dir}"
+}
+
+_install_verified_release_bundle() {
+    local extracted_dir="${1:?_install_verified_release_bundle requires a directory}"
+
+    if _is_source_checkout; then
+        _assert_clean_source_checkout
+        command -v rsync &>/dev/null || die "Source checkout updates require rsync."
+        [[ -w "${REPO_ROOT}" ]] || die "Source checkout is not writable: ${REPO_ROOT}"
+        log "Installing verified update into source checkout ${REPO_ROOT}..."
+        rsync -a --exclude='.git' "${extracted_dir}/" "${REPO_ROOT}/" \
+            >> "${LOG_FILE}" 2>&1 \
+            || die "Verified source checkout update failed. See log: ${LOG_FILE}"
+    else
+        check_root
+        [[ -x "${extracted_dir}/install.sh" ]] || die "Verified update bundle is missing install.sh"
+        log "Installing verified update into prefix ${REPO_ROOT}..."
+        bash "${extracted_dir}/install.sh" --prefix "${REPO_ROOT}" \
+            >> "${LOG_FILE}" 2>&1 \
+            || die "Verified prefix install failed. See log: ${LOG_FILE}"
+    fi
+}
 
 _check_for_update() {
     log "Checking for updates..."
-    if ! command -v curl &>/dev/null; then
-        die "--check-update requires curl. Install it: pacman -S curl"
-    fi
-
-    local latest_tag
-    latest_tag="$(curl -fsSL "${GITHUB_API}" 2>/dev/null \
-        | grep '"tag_name"' \
-        | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')" \
-        || die "Could not reach GitHub API. Check network connectivity."
+    local release_json latest_tag
+    release_json="$(_fetch_release_json)"
+    latest_tag="$(_latest_release_tag "${release_json}")"
 
     if [[ -z "${latest_tag}" ]]; then
         warn "Could not determine latest release tag."
@@ -504,47 +701,25 @@ _check_for_update() {
 }
 
 _self_update() {
-    _check_for_update
+    local release_json latest_tag current tmpdir archive_path extracted_dir
 
-    local latest_tag
-    latest_tag="$(curl -fsSL "${GITHUB_API}" 2>/dev/null \
-        | grep '"tag_name"' \
-        | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+    release_json="$(_fetch_release_json)"
+    latest_tag="$(_latest_release_tag "${release_json}")"
+    [[ -n "${latest_tag}" ]] || die "Could not determine latest release tag."
 
-    local current="v${TOOLKIT_VERSION}"
+    current="v${TOOLKIT_VERSION}"
+    log "Current version : ${current}"
+    log "Latest release  : ${latest_tag}"
+
     [[ "${current}" == "${latest_tag}" ]] && {
         echo "  Already at latest version (${current})." >&2
         return 0
     }
 
-    log "Downloading ${latest_tag}..."
-    local tmpdir
     tmpdir="$(mktemp -d /tmp/arch-recovery-update.XXXXXX)"
-
-    local tarball_url
-    tarball_url="https://github.com/${GITHUB_REPO}/archive/refs/tags/${latest_tag}.tar.gz"
-
-    curl -fsSL "${tarball_url}" -o "${tmpdir}/release.tar.gz" \
-        || die "Failed to download release tarball from ${tarball_url}"
-
-    tar -xzf "${tmpdir}/release.tar.gz" -C "${tmpdir}" \
-        || die "Failed to extract release tarball"
-
-    local extracted_dir
-    extracted_dir="$(find "${tmpdir}" -maxdepth 1 -type d -name 'arch-system-recovery-*' \
-        | head -1)"
-    [[ -z "${extracted_dir}" ]] && die "Could not find extracted directory in tarball"
-
-    # Install over current location
-    log "Installing to ${REPO_ROOT}..."
-    rsync -a --exclude='.git' "${extracted_dir}/" "${REPO_ROOT}/" \
-        >> "${LOG_FILE}" 2>&1 \
-        || die "rsync install failed. See log: ${LOG_FILE}"
-
-    chmod +x "${REPO_ROOT}/bin/arch-recovery" \
-              "${REPO_ROOT}/bin/arch-recovery.fish" \
-              "${REPO_ROOT}/bin/arch-recovery.sh" \
-              "${REPO_ROOT}/install.sh"
+    archive_path="$(_download_verified_release_bundle "${release_json}" "${latest_tag}" "${tmpdir}")"
+    extracted_dir="$(_extract_verified_release_bundle "${archive_path}" "${latest_tag}" "${tmpdir}")"
+    _install_verified_release_bundle "${extracted_dir}"
 
     rm -rf "${tmpdir}"
     _c_green; _c_bold
@@ -554,4 +729,6 @@ _self_update() {
     log "Self-update complete: ${current} → ${latest_tag}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

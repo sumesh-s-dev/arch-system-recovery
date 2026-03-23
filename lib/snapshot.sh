@@ -68,6 +68,23 @@ list_btrfs_snapshots() {
 #
 # The original subvolume is NEVER deleted — it is renamed so the user
 # can recover it again if the rollback itself causes problems.
+_validate_snapshot_name() {
+    local snapshot="${1:?_validate_snapshot_name requires a snapshot name}"
+    local part
+
+    [[ -n "${snapshot}" ]] || die "Snapshot name cannot be empty."
+    [[ "${snapshot}" != /* ]] || die "Snapshot name must be relative to the BTRFS top-level mount."
+
+    IFS='/' read -r -a parts <<< "${snapshot}"
+    for part in "${parts[@]}"; do
+        case "${part}" in
+            ""|"."|"..")
+                die "Unsafe snapshot name '${snapshot}'. Use the exact relative path reported by --list-snapshots."
+                ;;
+        esac
+    done
+}
+
 rollback_snapshot() {
     local dev="${1:?rollback_snapshot requires a device}"
     local target_snap="${2:?rollback_snapshot requires a snapshot name}"
@@ -78,6 +95,7 @@ rollback_snapshot() {
 
     log "Starting BTRFS snapshot rollback on ${dev}"
     log "  Target snapshot: ${target_snap}"
+    _validate_snapshot_name "${target_snap}"
 
     # ── Find current root subvolume name ──────────────────────────────────────
     local root_subvol

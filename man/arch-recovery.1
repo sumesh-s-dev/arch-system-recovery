@@ -1,7 +1,7 @@
 .\" arch-recovery.1 — manual page for the Arch System Recovery Toolkit
 .\" Generate HTML preview: man2html arch-recovery.1
 .\" View locally:          man ./man/arch-recovery.1
-.TH ARCH\-RECOVERY 1 "2025-06-01" "arch\-recovery 1.1.0" "Arch Linux Utilities"
+.TH ARCH\-RECOVERY 1 "2026-03-23" "arch\-recovery 1.1.1" "Arch Linux Utilities"
 
 .SH NAME
 arch\-recovery \- Arch Linux system recovery toolkit
@@ -59,6 +59,9 @@ Specify the root partition explicitly (e.g.\ \fI/dev/sda2\fR,
 \fI/dev/nvme0n1p2\fR).
 If omitted, auto-detection is attempted.
 .TP
+.BI \-\-boot " DEVICE"
+Specify a separate \fI/boot\fR partition when the installed system uses one.
+.TP
 .BI \-\-efi " DEVICE"
 Specify the EFI System Partition (e.g.\ \fI/dev/sda1\fR).
 If omitted, auto-detection is attempted.
@@ -107,7 +110,8 @@ Produces a pass/warn/fail summary.
 .TP
 .BI \-\-update
 Check GitHub for a newer release and install it if one is available.
-Requires \fBcurl\fR(1) and network access.
+Requires a verified release bundle asset and matching \fI.sha256\fR file,
+plus \fBcurl\fR(1), \fBtar\fR(1), and \fBsha256sum\fR(1).
 .TP
 .B \-\-check\-update
 Check for updates without installing.
@@ -184,7 +188,7 @@ Preview what would happen, in detail:
 
 .TP
 Specify partitions explicitly:
-.B sudo arch\-recovery \-\-root /dev/sda2 \-\-efi /dev/sda1
+.B sudo arch\-recovery \-\-root /dev/sda2 \-\-boot /dev/sda1 \-\-efi /dev/sda3
 
 .TP
 Auto-repair plus keyring fix:

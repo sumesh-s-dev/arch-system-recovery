@@ -16,3 +16,4 @@ venv/
 # Build / test artifacts
 *.log
 coverage/
+dist/

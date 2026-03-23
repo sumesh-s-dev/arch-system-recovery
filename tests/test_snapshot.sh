@@ -10,16 +10,38 @@ export PATH="${MOCK_DIR}:${PATH}"
 
 source "${REPO_ROOT}/lib/core.sh"
 init_log
+source "${REPO_ROOT}/lib/snapshot.sh"
 
 make_mock() {
     printf '#!/usr/bin/env bash\n%s\n' "$2" > "${MOCK_DIR}/$1"
     chmod +x "${MOCK_DIR}/$1"
 }
 
+# ── Test: snapshot names reject unsafe traversal / absolute paths ─────────────
+assert_exits_err bash -c "
+    export LOG_FILE=/dev/null
+    source '${REPO_ROOT}/lib/core.sh'
+    source '${REPO_ROOT}/lib/snapshot.sh'
+    _validate_snapshot_name '../evil' 2>/dev/null
+"
+
+assert_exits_err bash -c "
+    export LOG_FILE=/dev/null
+    source '${REPO_ROOT}/lib/core.sh'
+    source '${REPO_ROOT}/lib/snapshot.sh'
+    _validate_snapshot_name '/absolute/path' 2>/dev/null
+"
+
+assert_exits_ok bash -c "
+    export LOG_FILE=/dev/null
+    source '${REPO_ROOT}/lib/core.sh'
+    source '${REPO_ROOT}/lib/snapshot.sh'
+    _validate_snapshot_name '@snapshots/2024-01-15'
+"
+
 # ── Test: list_btrfs_snapshots rejects non-btrfs device ──────────────────────
 make_mock blkid 'echo "ext4"'
 source "${REPO_ROOT}/lib/detect.sh"
-source "${REPO_ROOT}/lib/snapshot.sh"
 
 assert_exits_err bash -c "
     export LOG_FILE=/dev/null

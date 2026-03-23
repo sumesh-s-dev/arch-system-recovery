@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # ── Version ───────────────────────────────────────────────────────────────────
-[[ -v TOOLKIT_VERSION ]] || readonly TOOLKIT_VERSION="1.1.0"
+[[ -v TOOLKIT_VERSION ]] || readonly TOOLKIT_VERSION="1.1.1"
 
 # ── Log file ──────────────────────────────────────────────────────────────────
 [[ -v LOG_FILE ]]    || readonly LOG_FILE="/tmp/recovery-toolkit.log"

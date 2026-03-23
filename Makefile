@@ -9,7 +9,7 @@ MAN        := man/arch-recovery.1
 COMPLETIONS := completions/arch-recovery.bash completions/_arch-recovery \
                completions/arch-recovery.fish
 
-.PHONY: all install uninstall check shellcheck test man clean help
+.PHONY: all install uninstall check shellcheck test man clean help dist
 
 all: check test
 
@@ -48,6 +48,25 @@ shellcheck:
 ## test          — run unit test suite
 test:
 	@bash tests/run_tests.sh
+
+## dist          — build verified release bundle in dist/
+dist:
+	@command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum not found"; exit 1; }
+	@version="$$(bash bin/arch-recovery --version | awk '{print $$2}')"; \
+	tag="v$${version}"; \
+	archive="arch-system-recovery-$${tag}.tar.gz"; \
+	root_dir="arch-system-recovery-$${version}"; \
+	mkdir -p dist; \
+	rm -f "dist/$${archive}" "dist/$${archive}.sha256"; \
+	if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+	    git ls-files | tar -czf "dist/$${archive}" --transform "s,^,$${root_dir}/," -T -; \
+	else \
+	    tar --exclude='./.git' --exclude='./dist' --exclude='./.github' \
+	        -czf "dist/$${archive}" --transform "s,^\.,$${root_dir}," .; \
+	fi; \
+	( cd dist && sha256sum "$${archive}" > "$${archive}.sha256" ); \
+	echo "Built dist/$${archive}"; \
+	echo "Built dist/$${archive}.sha256"
 
 ## man           — render manpage to terminal
 man:

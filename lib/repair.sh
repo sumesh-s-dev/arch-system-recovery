@@ -37,6 +37,9 @@ repair_bootloader() {
             repair_systemd_boot
             ;;
         unknown)
+            if [[ "${AUTO_MODE:-false}" == "true" ]]; then
+                die "Could not auto-detect the bootloader in --auto mode. Re-run without --auto or add --no-bootloader."
+            fi
             log "Bootloader unknown. Attempting to determine from user input..."
             local choice
             choice="$(prompt_bootloader_choice)"

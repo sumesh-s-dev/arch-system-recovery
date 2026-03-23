@@ -23,6 +23,7 @@ assert_contains "${help_out}" "--auto"       "--help lists --auto"
 assert_contains "${help_out}" "--dry-run"    "--help lists --dry-run"
 assert_contains "${help_out}" "--diagnose"   "--help lists --diagnose"
 assert_contains "${help_out}" "--tui"        "--help lists --tui"
+assert_contains "${help_out}" "--boot"       "--help lists --boot"
 
 # --version exits 0
 assert_exits_ok bash "${ARCH_RECOVERY}" --version
