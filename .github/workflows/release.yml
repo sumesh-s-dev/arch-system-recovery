@@ -73,14 +73,33 @@ jobs:
             -s "${signature}" \
             < "${manifest}"
 
+      - name: Prepare publishable assets
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          tar_asset="dist/arch-system-recovery-${tag}.tar"
+          manifest_src="docs/releases/${tag}.manifest"
+          signature_src="${manifest_src}.sig"
+          manifest_asset="dist/arch-system-recovery-${tag}.manifest"
+          signature_asset="${manifest_asset}.sig"
+          compat_tarball="${tar_asset}.gz"
+
+          cp "${manifest_src}" "${manifest_asset}"
+          cp "${signature_src}" "${signature_asset}"
+          gzip -n -c "${tar_asset}" > "${compat_tarball}"
+          (cd dist && sha256sum "$(basename "${compat_tarball}")" > "$(basename "${compat_tarball}").sha256")
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
           body_path: docs/releases/${{ github.ref_name }}.md
+          overwrite_files: true
           files: |
             dist/arch-system-recovery-${{ github.ref_name }}.tar
             dist/arch-system-recovery-${{ github.ref_name }}.tar.sha256
-            docs/releases/${{ github.ref_name }}.manifest
-            docs/releases/${{ github.ref_name }}.manifest.sig
+            dist/arch-system-recovery-${{ github.ref_name }}.manifest
+            dist/arch-system-recovery-${{ github.ref_name }}.manifest.sig
+            dist/arch-system-recovery-${{ github.ref_name }}.tar.gz
+            dist/arch-system-recovery-${{ github.ref_name }}.tar.gz.sha256
           fail_on_unmatched_files: true

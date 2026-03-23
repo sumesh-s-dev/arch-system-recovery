@@ -200,6 +200,8 @@ Authenticated releases publish four files:
 - `arch-system-recovery-vX.Y.Z.manifest`
 - `arch-system-recovery-vX.Y.Z.manifest.sig`
 
+Releases may also include legacy `.tar.gz` compatibility assets so older self-update clients can still upgrade.
+
 ---
 
 ## Shell support

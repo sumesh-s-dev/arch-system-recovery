@@ -230,6 +230,9 @@ Release maintainers should publish both `make dist` assets and the signed manife
 - `arch-system-recovery-vX.Y.Z.manifest`
 - `arch-system-recovery-vX.Y.Z.manifest.sig`
 
+For backward compatibility, releases may also ship `arch-system-recovery-vX.Y.Z.tar.gz`
+and `arch-system-recovery-vX.Y.Z.tar.gz.sha256` for older updater clients.
+
 ---
 
 ## Common scenarios
