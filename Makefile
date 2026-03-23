@@ -58,17 +58,28 @@ integration-test:
 ## dist          — build verified release bundle in dist/
 dist:
 	@command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum not found"; exit 1; }
-	@version="$$(bash bin/arch-recovery --version | awk '{print $$2}')"; \
+	@command -v gzip >/dev/null 2>&1 || { echo "gzip not found"; exit 1; }
+	@set -o pipefail; \
+	version="$$(bash bin/arch-recovery --version | awk '{print $$2}')"; \
 	tag="v$${version}"; \
 	archive="arch-system-recovery-$${tag}.tar.gz"; \
 	root_dir="arch-system-recovery-$${version}"; \
 	mkdir -p dist; \
 	rm -f "dist/$${archive}" "dist/$${archive}.sha256"; \
 	if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
-	    git ls-files | tar -czf "dist/$${archive}" --transform "s,^,$${root_dir}/," -T -; \
+	    git ls-files -z | tar --null \
+	        --sort=name \
+	        --mtime='UTC 1970-01-01' \
+	        --owner=0 --group=0 --numeric-owner \
+	        --transform "s,^,$${root_dir}/," \
+	        -cf - -T - | gzip -n > "dist/$${archive}"; \
 	else \
-	    tar --exclude='./.git' --exclude='./dist' --exclude='./.github' \
-	        -czf "dist/$${archive}" --transform "s,^\.,$${root_dir}," .; \
+	    tar --exclude='./.git' --exclude='./dist' \
+	        --sort=name \
+	        --mtime='UTC 1970-01-01' \
+	        --owner=0 --group=0 --numeric-owner \
+	        --transform "s,^\.,$${root_dir}," \
+	        -cf - . | gzip -n > "dist/$${archive}"; \
 	fi; \
 	( cd dist && sha256sum "$${archive}" > "$${archive}.sha256" ); \
 		echo "Built dist/$${archive}"; \
@@ -120,8 +131,8 @@ install-completions:
 ## clean         — remove generated temp files
 clean:
 	@rm -f /tmp/recovery-toolkit.log /tmp/arch-recovery*.log
+	@rm -rf /tmp/arch-recovery-session.* /tmp/arch-recovery-update.* /tmp/arch-recovery-install-patched.*
 	@rm -f /tmp/arch-recovery.html
-	@rm -f /tmp/arch-recovery-install-patched
 	@echo "Cleaned."
 
 ## help          — show available targets
