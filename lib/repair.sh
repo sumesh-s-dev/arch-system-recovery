@@ -27,6 +27,8 @@ repair_bootloader() {
     local bootloader="${1:-unknown}"
     local efi_dev="${2:-}"
 
+    mount_bind  # bootloader tools need the same virtual filesystems as mkinitcpio
+
     case "${bootloader}" in
         grub)
             repair_grub "${efi_dev}"

@@ -12,47 +12,63 @@ readonly BIND_MOUNTS=(/dev /proc /sys /run)
 mount_root() {
     local dev="${1:?mount_root requires a device}"
     local fstype="${2:?mount_root requires a filesystem type}"
+    local mode="${3:-rw}"
 
-    log "Preparing mount point: ${MOUNT_ROOT}"
-    mkdir -p "${MOUNT_ROOT}"
+    mount_root_at "${MOUNT_ROOT}" "${dev}" "${fstype}" "${mode}"
+}
+
+# ── mount_root_at ─────────────────────────────────────────────────────────────
+# Mounts <dev> of type <fstype> at an explicit target directory.
+mount_root_at() {
+    local target="${1:?mount_root_at requires a target}"
+    local dev="${2:?mount_root_at requires a device}"
+    local fstype="${3:?mount_root_at requires a filesystem type}"
+    local mode="${4:-rw}"
+
+    log "Preparing mount point: ${target}"
+    mkdir -p "${target}"
 
     # Unmount if already mounted (idempotent re-run)
-    if mountpoint -q "${MOUNT_ROOT}" 2>/dev/null; then
-        log "  ${MOUNT_ROOT} already mounted; skipping."
+    if mountpoint -q "${target}" 2>/dev/null; then
+        log "  ${target} already mounted; skipping."
         return 0
     fi
 
     case "${fstype}" in
         btrfs)
-            _mount_btrfs "${dev}"
+            _mount_btrfs "${dev}" "${target}" "${mode}"
             ;;
         ext4)
-            _mount_ext4 "${dev}"
+            _mount_ext4 "${dev}" "${target}" "${mode}"
             ;;
         *)
-            die "mount_root: unsupported filesystem '${fstype}'"
+            die "mount_root_at: unsupported filesystem '${fstype}'"
             ;;
     esac
 
-    log "Root filesystem mounted at ${MOUNT_ROOT}"
+    log "Root filesystem mounted at ${target}"
 }
 
 # ── _mount_btrfs ──────────────────────────────────────────────────────────────
 _mount_btrfs() {
     local dev="$1"
+    local target="$2"
+    local mode="${3:-rw}"
     local subvol
+    local opts
     subvol="$(detect_btrfs_subvol "${dev}")"
 
+    opts="${mode},compress=zstd,noatime"
     if [[ -n "${subvol}" ]]; then
         log "  Mounting BTRFS subvolume '${subvol}' from ${dev}"
-        mount -t btrfs -o "subvol=${subvol},compress=zstd,noatime" \
-              "${dev}" "${MOUNT_ROOT}" \
+        mount -t btrfs -o "subvol=${subvol},${opts}" \
+              "${dev}" "${target}" \
               >> "${LOG_FILE}" 2>&1 \
               || die "Failed to mount BTRFS subvolume '${subvol}' on ${dev}"
     else
         log "  Mounting BTRFS top-level (no named subvolume) from ${dev}"
-        mount -t btrfs -o "subvolid=5,compress=zstd,noatime" \
-              "${dev}" "${MOUNT_ROOT}" \
+        mount -t btrfs -o "subvolid=5,${opts}" \
+              "${dev}" "${target}" \
               >> "${LOG_FILE}" 2>&1 \
               || die "Failed to mount BTRFS top-level on ${dev}"
     fi
@@ -61,9 +77,11 @@ _mount_btrfs() {
 # ── _mount_ext4 ───────────────────────────────────────────────────────────────
 _mount_ext4() {
     local dev="$1"
+    local target="$2"
+    local mode="${3:-rw}"
     log "  Mounting ext4 partition ${dev}"
-    mount -t ext4 -o rw,relatime \
-          "${dev}" "${MOUNT_ROOT}" \
+    mount -t ext4 -o "${mode},relatime" \
+          "${dev}" "${target}" \
           >> "${LOG_FILE}" 2>&1 \
           || die "Failed to mount ext4 partition ${dev}"
 }
@@ -73,8 +91,19 @@ _mount_ext4() {
 # Detects whether the system uses /boot/efi or /boot as the EFI mountpoint.
 mount_efi() {
     local efi_dev="${1:?mount_efi requires an EFI device}"
+    local mode="${2:-rw}"
+    mount_efi_at "${MOUNT_ROOT}" "${efi_dev}" "${mode}"
+}
+
+# ── mount_efi_at ──────────────────────────────────────────────────────────────
+# Mounts <efi_dev> at the EFI location inside the specified root.
+mount_efi_at() {
+    local root="${1:?mount_efi_at requires a root}"
+    local efi_dev="${2:?mount_efi_at requires an EFI device}"
+    local mode="${3:-rw}"
     local efi_target
-    efi_target="$(_resolve_efi_target)"
+    local mount_opts=()
+    efi_target="$(_resolve_efi_target "${root}")"
 
     log "Mounting EFI partition ${efi_dev} → ${efi_target}"
     mkdir -p "${efi_target}"
@@ -84,7 +113,8 @@ mount_efi() {
         return 0
     fi
 
-    mount -t vfat "${efi_dev}" "${efi_target}" \
+    [[ "${mode}" == "ro" ]] && mount_opts=(-o ro)
+    mount -t vfat "${mount_opts[@]}" "${efi_dev}" "${efi_target}" \
           >> "${LOG_FILE}" 2>&1 \
           || die "Failed to mount EFI partition ${efi_dev} at ${efi_target}"
 
@@ -95,27 +125,28 @@ mount_efi() {
 # Determines the correct EFI mount target by inspecting the chrooted fstab.
 # Falls back to /boot/efi (most common Arch layout) if unclear.
 _resolve_efi_target() {
-    local fstab="${MOUNT_ROOT}/etc/fstab"
+    local root="${1:-${MOUNT_ROOT}}"
+    local fstab="${root}/etc/fstab"
 
     if [[ -f "${fstab}" ]]; then
         # Look for a line that mounts /boot/efi or /efi
         if grep -qE '^\s*[^#].*\s/boot/efi\s' "${fstab}"; then
-            echo "${MOUNT_ROOT}/boot/efi"
+            echo "${root}/boot/efi"
             return 0
         fi
         if grep -qE '^\s*[^#].*\s/efi\s' "${fstab}"; then
-            echo "${MOUNT_ROOT}/efi"
+            echo "${root}/efi"
             return 0
         fi
         if grep -qE '^\s*[^#].*\s/boot\s' "${fstab}" && \
-           [[ "$(blkid -s TYPE -o value "$(findmnt -n -o SOURCE "${MOUNT_ROOT}/boot" 2>/dev/null || true)" 2>/dev/null || true)" == "vfat" ]]; then
-            echo "${MOUNT_ROOT}/boot"
+           [[ "$(blkid -s TYPE -o value "$(findmnt -n -o SOURCE "${root}/boot" 2>/dev/null || true)" 2>/dev/null || true)" == "vfat" ]]; then
+            echo "${root}/boot"
             return 0
         fi
     fi
 
     # Safe default
-    echo "${MOUNT_ROOT}/boot/efi"
+    echo "${root}/boot/efi"
 }
 
 # ── mount_bind ────────────────────────────────────────────────────────────────

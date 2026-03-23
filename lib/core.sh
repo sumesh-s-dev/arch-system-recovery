@@ -17,8 +17,12 @@ set -euo pipefail
 LOG_LEVEL="${LOG_LEVEL:-normal}"
 
 # ── Required tools ────────────────────────────────────────────────────────────
-[[ -v REQUIRED_DEPS ]] || readonly REQUIRED_DEPS=(
-    blkid lsblk mount umount findmnt arch-chroot mkinitcpio
+[[ -v BASE_DEPS ]] || readonly BASE_DEPS=(
+    blkid lsblk mount umount findmnt
+)
+
+[[ -v FULL_FLOW_DEPS ]] || readonly FULL_FLOW_DEPS=(
+    arch-chroot mkinitcpio
 )
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
@@ -120,13 +124,22 @@ check_root() {
 
 # ── check_deps ────────────────────────────────────────────────────────────────
 check_deps() {
+    local mode="${1:-full}"
     local missing=()
-    for dep in "${REQUIRED_DEPS[@]}"; do
+    local deps=("${BASE_DEPS[@]}")
+
+    if [[ "${mode}" == "full" ]]; then
+        deps+=("${FULL_FLOW_DEPS[@]}")
+    fi
+
+    for dep in "${deps[@]}"; do
         command -v "${dep}" &>/dev/null || missing+=("${dep}")
     done
 
-    # At least one bootloader tool required
-    if ! command -v grub-install &>/dev/null && ! command -v bootctl &>/dev/null; then
+    # At least one bootloader tool required for repair flows
+    if [[ "${mode}" == "full" ]] && \
+       ! command -v grub-install &>/dev/null && \
+       ! command -v bootctl &>/dev/null; then
         missing+=("grub-install OR bootctl")
     fi
 

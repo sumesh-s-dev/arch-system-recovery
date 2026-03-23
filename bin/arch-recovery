@@ -42,6 +42,7 @@ DO_NETWORK=false
 LIST_SNAPSHOTS=false
 SNAPSHOT_ROLLBACK=""
 DO_HEALTH_CHECK=false
+HEALTH_CHECK_ONLY=false
 DO_UPDATE=false
 CHECK_UPDATE_ONLY=false
 
@@ -65,19 +66,19 @@ trap 'echo ""; echo "Interrupted — cleaning up..."; exit 130' INT TERM
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --auto)            AUTO_MODE=true;              shift ;;
+            --auto)            AUTO_MODE=true; HEALTH_CHECK_ONLY=false; shift ;;
             --dry-run)         DRY_RUN=true;                shift ;;
-            --tui)             TUI_MODE=true;               shift ;;
-            --diagnose)        DIAGNOSE_MODE=true;          shift ;;
+            --tui)             TUI_MODE=true; HEALTH_CHECK_ONLY=false; shift ;;
+            --diagnose)        DIAGNOSE_MODE=true; HEALTH_CHECK_ONLY=false; shift ;;
             --root)            ROOT_DEVICE="${2:?--root requires a device}"; shift 2 ;;
             --efi)             EFI_DEVICE="${2:?--efi requires a device}";   shift 2 ;;
-            --no-initramfs)    DO_INITRAMFS=false;          shift ;;
-            --no-bootloader)   DO_BOOTLOADER=false;         shift ;;
-            --no-fstab)        DO_FSTAB=false;              shift ;;
-            --repair-keyring)  DO_KEYRING=true;             shift ;;
-            --setup-network)   DO_NETWORK=true;             shift ;;
-            --list-snapshots)  LIST_SNAPSHOTS=true;         shift ;;
-            --rollback)        SNAPSHOT_ROLLBACK="${2:?--rollback requires a snapshot name}"; shift 2 ;;
+            --no-initramfs)    DO_INITRAMFS=false; HEALTH_CHECK_ONLY=false; shift ;;
+            --no-bootloader)   DO_BOOTLOADER=false; HEALTH_CHECK_ONLY=false; shift ;;
+            --no-fstab)        DO_FSTAB=false; HEALTH_CHECK_ONLY=false; shift ;;
+            --repair-keyring)  DO_KEYRING=true; HEALTH_CHECK_ONLY=false; shift ;;
+            --setup-network)   DO_NETWORK=true; HEALTH_CHECK_ONLY=false; shift ;;
+            --list-snapshots)  LIST_SNAPSHOTS=true; HEALTH_CHECK_ONLY=false; shift ;;
+            --rollback)        SNAPSHOT_ROLLBACK="${2:?--rollback requires a snapshot name}"; HEALTH_CHECK_ONLY=false; shift 2 ;;
             --log-level)
                 case "${2:-}" in
                     silent|normal|verbose|debug) LOG_LEVEL="$2" ;;
@@ -90,9 +91,9 @@ parse_args() {
             --help|-h)         _show_help;  exit 0 ;;
             --version)         echo "arch-recovery ${TOOLKIT_VERSION}"; exit 0 ;;
             --changelog)       _show_changelog; exit 0 ;;
-            --health-check)    DO_HEALTH_CHECK=true;       shift ;;
-            --update)          DO_UPDATE=true;             shift ;;
-            --check-update)    CHECK_UPDATE_ONLY=true;      shift ;;
+            --health-check)    DO_HEALTH_CHECK=true; HEALTH_CHECK_ONLY=true; shift ;;
+            --update)          DO_UPDATE=true; HEALTH_CHECK_ONLY=false; shift ;;
+            --check-update)    CHECK_UPDATE_ONLY=true; HEALTH_CHECK_ONLY=false; shift ;;
             *)
                 err "Unknown option: $1"
                 echo "  Run: sudo arch-recovery --help" >&2
@@ -218,24 +219,44 @@ main() {
 
     print_banner
     check_root
-    check_deps
 
     dlog "Repository root : ${REPO_ROOT}"
     dlog "Log level       : ${LOG_LEVEL}"
     dlog "Bash version    : ${BASH_VERSION}"
 
+    # ── Standalone health check ───────────────────────────────────────────────
+    if ${HEALTH_CHECK_ONLY}; then
+        check_deps "readonly"
+        run_standalone_health_check "${ROOT_DEVICE}" "${EFI_DEVICE}"
+        return 0
+    fi
+
     # ── Diagnose only ─────────────────────────────────────────────────────────
     if ${DIAGNOSE_MODE}; then
+        check_deps "readonly"
         diagnose_main "${ROOT_DEVICE}" "${EFI_DEVICE}"
         return 0
     fi
 
     # ── Snapshot list ─────────────────────────────────────────────────────────
     if ${LIST_SNAPSHOTS}; then
+        check_deps "readonly"
         [[ -z "${ROOT_DEVICE}" ]] && ROOT_DEVICE="$(
             ${AUTO_MODE} && auto_detect_root || prompt_root_device)"
-        list_btrfs_snapshots "${ROOT_DEVICE}"
+        MAPPED_ROOT="${ROOT_DEVICE}"
+        if is_luks "${ROOT_DEVICE}"; then
+            log "LUKS detected on ${ROOT_DEVICE}"
+            MAPPED_ROOT="$(unlock_luks "${ROOT_DEVICE}")"
+        fi
+        MAPPED_ROOT="$(detect_lvm "${MAPPED_ROOT}")"
+        list_btrfs_snapshots "${MAPPED_ROOT}"
         return 0
+    fi
+
+    if [[ -n "${SNAPSHOT_ROLLBACK}" ]]; then
+        check_deps "readonly"
+    else
+        check_deps
     fi
 
     # ── Network ───────────────────────────────────────────────────────────────
@@ -270,6 +291,14 @@ main() {
 
     # ── Snapshot rollback ─────────────────────────────────────────────────────
     if [[ -n "${SNAPSHOT_ROLLBACK}" ]]; then
+        if ${DRY_RUN}; then
+            log "[dry-run] Would roll back ${MAPPED_ROOT} to snapshot ${SNAPSHOT_ROLLBACK}"
+            return 0
+        fi
+        if ! ${AUTO_MODE}; then
+            confirm_snapshot_rollback "${ROOT_DEVICE}" "${MAPPED_ROOT}" "${SNAPSHOT_ROLLBACK}"
+        fi
+        _save_snapshot_rollback_plan "${ROOT_DEVICE}" "${MAPPED_ROOT}" "${SNAPSHOT_ROLLBACK}"
         rollback_snapshot "${MAPPED_ROOT}" "${SNAPSHOT_ROLLBACK}"
         return 0
     fi
@@ -382,7 +411,60 @@ _save_rollback_plan() {
     dlog "Rollback plan saved to ${LOG_FILE}"
 }
 
-main "$@"
+_save_snapshot_rollback_plan() {
+    local root="$1" mapped_root="$2" snapshot="$3"
+    {
+        echo "═══ SNAPSHOT ROLLBACK PLAN (generated $(date)) ═══"
+        echo "Target snapshot : ${snapshot}"
+        echo "Mapped root     : ${mapped_root}"
+        echo ""
+        echo "If rollback fails or boots badly:"
+        echo "1. Boot the Arch live ISO again."
+        [[ "${root}" != "${mapped_root}" ]] && \
+            echo "2. Re-open the original root container: ${root}"
+        echo "3. Mount top-level BTRFS: mount -o subvolid=5 ${mapped_root} /mnt/top"
+        echo "4. Rename ${snapshot} rollback target or restore the preserved @.broken-* subvolume."
+        echo "5. Unmount: umount /mnt/top"
+        echo "═══════════════════════════════════════════════════"
+    } >> "${LOG_FILE}"
+    dlog "Snapshot rollback plan saved to ${LOG_FILE}"
+}
+
+run_standalone_health_check() {
+    local root_dev="${1:-}"
+    local efi_dev="${2:-}"
+    local mapped_root fstype
+
+    print_step "HC1" "Identify root partition"
+    if [[ -z "${root_dev}" ]]; then
+        root_dev="$(auto_detect_root 2>/dev/null || prompt_root_device)"
+    fi
+    log "Health-check root device: ${root_dev}"
+
+    mapped_root="${root_dev}"
+    if is_luks "${root_dev}"; then
+        log "LUKS detected on ${root_dev}"
+        mapped_root="$(unlock_luks "${root_dev}")"
+    fi
+    mapped_root="$(detect_lvm "${mapped_root}")"
+
+    print_step "HC2" "Filesystem detection"
+    fstype="$(detect_filesystem "${mapped_root}")"
+
+    print_step "HC3" "Mount root filesystem (read-only)"
+    mount_root "${mapped_root}" "${fstype}" ro
+
+    if [[ -z "${efi_dev}" ]]; then
+        efi_dev="$(auto_detect_efi 2>/dev/null || true)"
+    fi
+    if [[ -n "${efi_dev}" ]]; then
+        print_step "HC4" "Mount EFI partition (read-only)"
+        mount_efi "${efi_dev}" ro
+    fi
+
+    print_step "HC5" "Run health check"
+    run_health_check
+}
 
 # ── Self-update helpers ───────────────────────────────────────────────────────
 
@@ -471,3 +553,5 @@ _self_update() {
     _c_reset
     log "Self-update complete: ${current} → ${latest_tag}"
 }
+
+main "$@"

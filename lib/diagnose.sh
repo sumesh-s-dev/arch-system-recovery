@@ -9,6 +9,7 @@ set -euo pipefail
 diagnose_main() {
     local root_dev="${1:-}"
     local efi_dev="${2:-}"
+    local mapped_root
     local issues=0
 
     _d_header "Arch System Recovery — Diagnostic Scan"
@@ -37,9 +38,12 @@ diagnose_main() {
 
     # ── LUKS ──────────────────────────────────────────────────────────────────
     _d_section "Encryption"
+    mapped_root="${root_dev}"
     if is_luks "${root_dev}"; then
         _d_ok "LUKS encryption detected on ${root_dev}"
         _d_hint "Passphrase will be required to unlock"
+        mapped_root="$(unlock_luks "${root_dev}")"
+        _d_ok "Unlocked mapper: ${mapped_root}"
     else
         _d_ok "No LUKS encryption on ${root_dev}"
     fi
@@ -50,6 +54,9 @@ diagnose_main() {
     lvm_vgs="$(vgs --noheadings -o vg_name 2>/dev/null | tr -d ' ' || true)"
     if [[ -n "${lvm_vgs}" ]]; then
         _d_ok "LVM volume groups found: ${lvm_vgs}"
+        mapped_root="$(detect_lvm "${mapped_root}" 2>/dev/null || echo "${mapped_root}")"
+        [[ "${mapped_root}" != "${root_dev}" ]] && \
+            _d_ok "Using mapped root device: ${mapped_root}"
     else
         _d_ok "No LVM volume groups detected"
     fi
@@ -57,7 +64,7 @@ diagnose_main() {
     # ── Filesystem ────────────────────────────────────────────────────────────
     _d_section "Filesystem"
     local fstype
-    fstype="$(detect_filesystem "${root_dev}" 2>/dev/null || echo "unknown")"
+    fstype="$(detect_filesystem "${mapped_root}" 2>/dev/null || echo "unknown")"
     if [[ "${fstype}" != "unknown" ]]; then
         _d_ok "Filesystem: ${fstype}"
     else
@@ -71,12 +78,15 @@ diagnose_main() {
     tmp_mount="$(mktemp -d /tmp/diag-mount.XXXXXX)"
     local mounted=false
 
-    if mount -o ro "${root_dev}" "${tmp_mount}" 2>/dev/null; then
+    if [[ "${fstype}" == "unknown" ]]; then
+        _d_issue "Skipping mount test because filesystem detection failed"
+        (( issues++ )) || true
+    elif mount_root_at "${tmp_mount}" "${mapped_root}" "${fstype}" ro 2>/dev/null; then
         _d_ok "Root partition mounts successfully (read-only)"
         mounted=true
     else
         _d_issue "Root partition failed to mount — filesystem may be corrupted"
-        _d_hint  "Run: fsck ${root_dev}   (unmount first)"
+        _d_hint  "Run: fsck ${mapped_root}   (unmount first)"
         (( issues++ )) || true
     fi
 
@@ -128,15 +138,12 @@ diagnose_main() {
         _d_section "Bootloader"
         local tmp_efi=""
         if [[ -n "${efi_dev}" ]] && [[ -b "${efi_dev}" ]]; then
-            tmp_efi="${tmp_mount}/boot/efi"
-            mkdir -p "${tmp_efi}"
-            mount -o ro "${efi_dev}" "${tmp_efi}" 2>/dev/null || tmp_efi=""
+            tmp_efi="$(_resolve_efi_target "${tmp_mount}")"
+            mount_efi_at "${tmp_mount}" "${efi_dev}" ro 2>/dev/null || tmp_efi=""
         fi
 
-        MOUNT_ROOT="${tmp_mount}"
         local bl
-        bl="$(detect_bootloader 2>/dev/null || echo "unknown")"
-        MOUNT_ROOT="/mnt/recovery"  # restore
+        bl="$(detect_bootloader "${tmp_mount}" 2>/dev/null || echo "unknown")"
 
         if [[ "${bl}" != "unknown" ]]; then
             _d_ok "Bootloader detected: ${bl}"

@@ -122,3 +122,29 @@ confirm_repair() {
     fi
     log "User confirmed recovery plan."
 }
+
+confirm_snapshot_rollback() {
+    local root="${1}" mapped_root="${2}" snapshot="${3}"
+
+    echo "" >&2
+    _c_bold; printf "  ══ SNAPSHOT ROLLBACK ═══════════════════════════\n" >&2; _c_reset
+    printf "  Root device    : %s\n" "${root}" >&2
+    printf "  Working device : %s\n" "${mapped_root}" >&2
+    printf "  Snapshot       : %s\n" "${snapshot}" >&2
+    echo "" >&2
+    echo "  This will rename the current BTRFS root subvolume and replace it" >&2
+    echo "  with a writable copy of the selected snapshot." >&2
+    echo "" >&2
+    _c_red; _c_bold
+    printf "  Type 'rollback' to proceed: " >&2
+    _c_reset
+
+    local ans; read -r ans
+    if [[ "${ans}" != "rollback" ]]; then
+        log "User aborted snapshot rollback."
+        echo "" >&2
+        echo "  Aborted — no changes made." >&2
+        exit 0
+    fi
+    log "User confirmed snapshot rollback to ${snapshot}."
+}

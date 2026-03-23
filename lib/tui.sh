@@ -19,7 +19,6 @@ tui_main() {
     log "TUI mode started (backend: ${backend})"
 
     check_root
-    check_deps
 
     # Welcome screen
     _tui_msgbox "${backend}" \
@@ -49,6 +48,11 @@ tui_main() {
             echo "Goodbye."
             exit 0 ;;
     esac
+}
+
+_tui_exec_cli() {
+    log "TUI handoff to CLI: $*"
+    exec bash "${REPO_ROOT}/bin/arch-recovery" "$@"
 }
 
 # ── Main menu ─────────────────────────────────────────────────────────────────
@@ -93,13 +97,8 @@ _tui_main_menu() {
 # ── Diagnose flow ─────────────────────────────────────────────────────────────
 _tui_run_diagnose() {
     local backend="$1"
-    _tui_infobox "${backend}" "Running diagnostics — please wait..." 5 50
-    DIAGNOSE_MODE=true
-    diagnose_main "" ""
-    _tui_msgbox "${backend}" "Diagnostics Complete" \
-        "Scan finished. Results have been written to:\n${LOG_FILE}\n\nPress OK to return to the menu." \
-        10 60
-    tui_main
+    _tui_infobox "${backend}" "Handing off to the standard diagnose flow..." 5 56
+    _tui_exec_cli --diagnose
 }
 
 # ── Full auto flow ────────────────────────────────────────────────────────────
@@ -107,32 +106,8 @@ _tui_run_full_auto() {
     local backend="$1"
     if _tui_yesno "${backend}" "Auto Repair" \
         "This will automatically detect and repair your system.\n\nAll default repairs will run:\n  • Rebuild initramfs\n  • Reinstall bootloader\n  • Validate fstab\n\nProceed?" 14 60; then
-        AUTO_MODE=true
-        # Run the standard main flow with AUTO_MODE
-        _tui_infobox "${backend}" "Running auto-repair — this may take a minute..." 5 55
-        AUTO_MODE=true
-        # Call repair steps directly
-        local root efi fstype bootloader
-        root="$(auto_detect_root 2>/dev/null)"     || root=""
-        [[ -n "${root}" ]] || {
-            _tui_msgbox "${backend}" "Error" \
-                "Could not auto-detect root partition.\nPlease use Guided mode." 8 55
-            tui_main; return
-        }
-        EFI_DEVICE="$(auto_detect_efi 2>/dev/null)" || EFI_DEVICE=""
-        MAPPED_ROOT="${root}"
-        is_luks "${root}" && MAPPED_ROOT="$(unlock_luks "${root}")"
-        MAPPED_ROOT="$(detect_lvm "${MAPPED_ROOT}")"
-        fstype="$(detect_filesystem "${MAPPED_ROOT}")"
-        mount_root "${MAPPED_ROOT}" "${fstype}"
-        [[ -n "${EFI_DEVICE}" ]] && mount_efi "${EFI_DEVICE}"
-        bootloader="$(detect_bootloader)"
-        repair_initramfs
-        repair_bootloader "${bootloader}" "${EFI_DEVICE:-}"
-        validate_and_repair_fstab
-        cleanup_mounts
-        _tui_msgbox "${backend}" "Done!" \
-            "Auto-repair complete.\n\nYou can now reboot.\n\nFull log:\n${LOG_FILE}" 10 60
+        _tui_infobox "${backend}" "Handing off to the standard auto-repair flow..." 5 58
+        _tui_exec_cli --auto
     else
         tui_main
     fi
@@ -143,10 +118,7 @@ _tui_guided_flow() {
     local backend="$1"
 
     # Pick root partition
-    local devices root_dev
-    devices="$(lsblk -dpno NAME,SIZE,TYPE,FSTYPE 2>/dev/null \
-        | awk '$3=="part" || $3=="disk" {printf "%s \"%s  %s\"\n", $1, $2, $4}')"
-
+    local root_dev
     root_dev="$(_tui_inputbox "${backend}" "Root Partition" \
         "Enter your root partition device:\n(e.g. /dev/sda2, /dev/nvme0n1p2)\n\nAvailable:\n$(lsblk -o NAME,SIZE,FSTYPE,LABEL 2>/dev/null | head -20)" \
         12 65 "/dev/")"
@@ -155,21 +127,6 @@ _tui_guided_flow() {
         _tui_msgbox "${backend}" "Error" "Invalid device: ${root_dev}" 7 45
         tui_main; return
     }
-
-    ROOT_DEVICE="${root_dev}"
-    MAPPED_ROOT="${root_dev}"
-
-    # LUKS?
-    if is_luks "${root_dev}"; then
-        _tui_msgbox "${backend}" "LUKS Detected" \
-            "Your root partition is encrypted.\n\nYou will be prompted for your passphrase in the terminal." \
-            9 55
-        MAPPED_ROOT="$(unlock_luks "${root_dev}")"
-    fi
-
-    MAPPED_ROOT="$(detect_lvm "${MAPPED_ROOT}")"
-    local fstype
-    fstype="$(detect_filesystem "${MAPPED_ROOT}")"
 
     # EFI?
     local efi_dev=""
@@ -183,37 +140,25 @@ _tui_guided_flow() {
             efi_dev=""
         }
     fi
-    EFI_DEVICE="${efi_dev}"
-
-    # Mount
-    mount_root "${MAPPED_ROOT}" "${fstype}"
-    [[ -n "${efi_dev}" ]] && mount_efi "${efi_dev}"
-
-    local bootloader
-    bootloader="$(detect_bootloader)"
 
     # Select what to repair
     local choices
     choices="$(_tui_checklist "${backend}" "Select Repairs" \
         "Choose what to repair:" \
         "INITRAMFS" "Rebuild initramfs (mkinitcpio -P)" ON \
-        "BOOTLOADER" "Reinstall ${bootloader} bootloader" ON \
+        "BOOTLOADER" "Reinstall the detected bootloader" ON \
         "FSTAB" "Validate and repair /etc/fstab" ON \
         "KEYRING" "Repair pacman keyring + mirrorlist" OFF)"
 
-    # Execute selected repairs
-    _tui_infobox "${backend}" "Running repairs — please wait..." 5 50
+    local -a args=("--root" "${root_dev}")
+    [[ -n "${efi_dev}" ]] && args+=("--efi" "${efi_dev}")
+    [[ "${choices}" == *"INITRAMFS"* ]]  || args+=("--no-initramfs")
+    [[ "${choices}" == *"BOOTLOADER"* ]] || args+=("--no-bootloader")
+    [[ "${choices}" == *"FSTAB"* ]]      || args+=("--no-fstab")
+    [[ "${choices}" == *"KEYRING"* ]]    && args+=("--repair-keyring")
 
-    [[ "${choices}" == *"INITRAMFS"* ]]  && repair_initramfs
-    [[ "${choices}" == *"BOOTLOADER"* ]] && repair_bootloader "${bootloader}" "${efi_dev:-}"
-    [[ "${choices}" == *"FSTAB"* ]]      && validate_and_repair_fstab
-    [[ "${choices}" == *"KEYRING"* ]]    && repair_pacman_keyring
-
-    cleanup_mounts
-
-    _tui_msgbox "${backend}" "Repairs Complete" \
-        "All selected repairs finished.\n\nYou can now reboot.\n\nFull log:\n${LOG_FILE}" \
-        10 60
+    _tui_infobox "${backend}" "Handing off to the standard guided repair flow..." 5 60
+    _tui_exec_cli "${args[@]}"
 }
 
 # ── Snapshots menu ────────────────────────────────────────────────────────────
@@ -224,15 +169,18 @@ _tui_snapshots_menu() {
         "Enter your BTRFS root partition:" 8 55 "/dev/")"
     [[ -z "${root_dev}" || ! -b "${root_dev}" ]] && { tui_main; return; }
 
-    local snap_list
-    snap_list="$(list_btrfs_snapshots "${root_dev}" 2>/dev/null || echo "(none found)")"
-
     if _tui_yesno "${backend}" "Snapshots" \
-        "Snapshots found:\n\n${snap_list}\n\nRoll back to a snapshot?" 18 65; then
+        "List snapshots first?\n\nChoose 'No' if you already know which snapshot to roll back to." 10 60; then
+        _tui_infobox "${backend}" "Handing off to the snapshot listing flow..." 5 54
+        _tui_exec_cli --list-snapshots --root "${root_dev}"
+    else
         local snap
         snap="$(_tui_inputbox "${backend}" "Rollback" \
             "Enter snapshot name to roll back to:" 8 55 "@")"
-        [[ -n "${snap}" ]] && rollback_snapshot "${root_dev}" "${snap}"
+        [[ -n "${snap}" ]] && {
+            _tui_infobox "${backend}" "Handing off to the snapshot rollback flow..." 5 56
+            _tui_exec_cli --rollback "${snap}" --root "${root_dev}"
+        }
     fi
     tui_main
 }
@@ -252,10 +200,8 @@ _tui_repair_keyring() {
     local backend="$1"
     if _tui_yesno "${backend}" "Repair Keyring" \
         "This will:\n  • Initialize pacman keyring\n  • Re-populate Arch Linux keys\n  • Refresh mirrorlist\n\nRequires internet. Proceed?" 12 60; then
-        _tui_infobox "${backend}" "Repairing keyring — please wait..." 5 50
-        repair_pacman_keyring
-        _tui_msgbox "${backend}" "Done" \
-            "Keyring repair complete.\nFull log: ${LOG_FILE}" 8 55
+        _tui_infobox "${backend}" "Handing off to the standard keyring repair flow..." 5 60
+        _tui_exec_cli --repair-keyring --no-initramfs --no-bootloader --no-fstab
     fi
     tui_main
 }
@@ -332,18 +278,46 @@ _tui_checklist() {
             _c_bold; echo "  ── ${title} ──"; _c_reset
             echo "  ${msg}"
             echo ""
-            local items=("$@") i=1 selected=""
+            local items=("$@") i=1
+            local tags=() states=()
             while [[ $# -ge 3 ]]; do
                 local tag="$1" desc="$2" state="$3"; shift 3
+                tags+=("${tag}")
+                states+=("${state}")
                 echo "  $((i++)). [${state}] ${tag}: ${desc}"
             done
             echo ""
             echo "  Enter numbers to toggle (space-separated), then Enter."
             echo "  Leave blank to keep defaults."
             read -r -p "  > " choices
-            # Return all ON items + any toggled
-            for (( j=0; j<${#items[@]}; j+=3 )); do
-                echo "${items[j]}"
+            local selected=()
+            for (( j=0; j<${#tags[@]}; j++ )); do
+                [[ "${states[j]}" == "ON" ]] && selected+=("${tags[j]}")
+            done
+
+            for choice in ${choices:-}; do
+                [[ "${choice}" =~ ^[0-9]+$ ]] || continue
+                (( choice >= 1 && choice <= ${#tags[@]} )) || continue
+                local idx=$(( choice - 1 ))
+                local tag="${tags[idx]}"
+                local present=false
+                local updated=()
+                for item in "${selected[@]}"; do
+                    if [[ "${item}" == "${tag}" ]]; then
+                        present=true
+                    else
+                        updated+=("${item}")
+                    fi
+                done
+                if ${present}; then
+                    selected=("${updated[@]}")
+                else
+                    selected+=("${tag}")
+                fi
+            done
+
+            for item in "${selected[@]}"; do
+                echo "${item}"
             done ;;
     esac
 }
