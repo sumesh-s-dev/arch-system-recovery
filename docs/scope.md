@@ -43,7 +43,7 @@
 
 **`mkinitcpio -P`** rebuilds all presets. If a custom preset references a
 missing module or hook, the rebuild will fail inside the chroot. The full
-error is captured in `/tmp/recovery-toolkit.log`.
+error is captured in the per-session log path printed at startup.
 
 **`grub-install`** writes to the EFI System Partition. Running it against the
 wrong device can overwrite a different OS's bootloader. Always verify the EFI

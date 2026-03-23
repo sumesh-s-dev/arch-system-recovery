@@ -4,10 +4,12 @@
 set -euo pipefail
 
 # ── Version ───────────────────────────────────────────────────────────────────
-[[ -v TOOLKIT_VERSION ]] || readonly TOOLKIT_VERSION="1.1.1"
+[[ -v TOOLKIT_VERSION ]] || readonly TOOLKIT_VERSION="1.1.2"
 
 # ── Log file ──────────────────────────────────────────────────────────────────
-[[ -v LOG_FILE ]]    || readonly LOG_FILE="/tmp/recovery-toolkit.log"
+[[ -v LEGACY_LOG_FILE ]] || readonly LEGACY_LOG_FILE="/tmp/recovery-toolkit.log"
+LOG_FILE="${LOG_FILE:-${LEGACY_LOG_FILE}}"
+SESSION_DIR="${SESSION_DIR:-}"
 
 # ── Mount root ────────────────────────────────────────────────────────────────
 [[ -v MOUNT_ROOT ]]  || readonly MOUNT_ROOT="/mnt/recovery"
@@ -41,6 +43,16 @@ _c_blue()  { _tty && printf '\033[0;34m' >&2 || true; }
 # and to LOG_FILE.
 
 _ts() { date '+%H:%M:%S'; }
+
+_make_private_temp_dir() {
+    local prefix="${1:-arch-recovery}"
+    local parent="${TMPDIR:-/tmp}"
+    local dir
+
+    dir="$(mktemp -d "${parent}/${prefix}.XXXXXX")" || return 1
+    chmod 700 "${dir}" 2>/dev/null || true
+    echo "${dir}"
+}
 
 # log — normal informational message (suppressed in silent mode)
 log() {
@@ -97,7 +109,20 @@ die() {
 
 # ── init_log ──────────────────────────────────────────────────────────────────
 init_log() {
+    if [[ -z "${LOG_FILE}" || "${LOG_FILE}" == "${LEGACY_LOG_FILE}" ]]; then
+        if [[ -z "${SESSION_DIR}" || ! -d "${SESSION_DIR}" ]]; then
+            SESSION_DIR="$(_make_private_temp_dir "arch-recovery-session")" || {
+                echo "ERROR: could not create a private session directory under ${TMPDIR:-/tmp}" >&2
+                exit 1
+            }
+        fi
+        LOG_FILE="${SESSION_DIR}/recovery-toolkit.log"
+    fi
+
     mkdir -p "$(dirname "${LOG_FILE}")"
+    [[ -n "${SESSION_DIR}" && -d "${SESSION_DIR}" ]] && chmod 700 "${SESSION_DIR}" 2>/dev/null || true
+    : > "${LOG_FILE}"
+    chmod 600 "${LOG_FILE}" 2>/dev/null || true
     {
         echo "════════════════════════════════════════════════════"
         echo " arch-recovery ${TOOLKIT_VERSION} — $(date '+%Y-%m-%d %H:%M:%S')"
@@ -105,6 +130,7 @@ init_log() {
         echo " Shell: ${SHELL:-unknown}  Bash: ${BASH_VERSION}"
         echo " User: $(id -un 2>/dev/null || echo unknown)"
         echo " Kernel: $(uname -r 2>/dev/null || echo unknown)"
+        [[ -n "${SESSION_DIR}" ]] && echo " Session dir: ${SESSION_DIR}"
         echo "════════════════════════════════════════════════════"
     } > "${LOG_FILE}"
 }

@@ -1,6 +1,6 @@
 # arch-system-recovery
 
-A production-grade, modular recovery toolkit for Arch-based Linux systems.
+A modular recovery toolkit for Arch-based Linux systems.
 Designed to be run from a live USB — it repairs the most common reasons an
 Arch installation will not boot, with zero knowledge required from the user.
 
@@ -42,7 +42,7 @@ hands-free with `--auto`.
 | **Health check** | Post-repair verification — kernel, initramfs, bootloader, fstab |
 | **Self-update** | `--update` pulls the latest release from GitHub |
 | **Shell support** | bash, zsh, fish, POSIX sh — launchers and tab-completions for all |
-| **Logging** | Every action logged to `/tmp/recovery-toolkit.log` with levels |
+| **Logging** | Private per-session log under `/tmp/arch-recovery-session.*/recovery-toolkit.log` |
 | **Safety** | Explicit confirmation, dry-run mode, rollback plan saved to log |
 
 ---
@@ -193,9 +193,12 @@ sudo arch-recovery --check-update
 sudo arch-recovery --update
 ```
 
-Build release assets with `make dist` and upload both files from `dist/`:
+Build release assets with `make dist`, then generate a signed manifest with `make release-manifest`.
+Authenticated releases publish four files:
 - `arch-system-recovery-vX.Y.Z.tar.gz`
 - `arch-system-recovery-vX.Y.Z.tar.gz.sha256`
+- `arch-system-recovery-vX.Y.Z.manifest`
+- `arch-system-recovery-vX.Y.Z.manifest.sig`
 
 ---
 
@@ -260,7 +263,8 @@ man arch-recovery
 | `--debug` | Every command traced as it runs |
 | `--log-level silent\|normal\|verbose\|debug` | Explicit control |
 
-All levels write the full log to `/tmp/recovery-toolkit.log`.
+All levels write the full log to a private per-session path under `/tmp`.
+The exact path is printed at startup.
 
 ---
 
@@ -303,11 +307,15 @@ arch-system-recovery/
 │   └── test_snapshot.sh
 ├── docs/
 │   ├── architecture.md
+│   ├── releases/              # Versioned release notes + signed manifests
 │   ├── scope.md
 │   └── usage.md
+├── keys/
+│   └── release_signers.allowed # Trusted SSH signers for authenticated releases
 ├── man/
 │   └── arch-recovery.1        # Manpage (groff/troff)
 ├── .github/workflows/ci.yml   # CI: syntax, shellcheck, tests, manpage
+├── .github/workflows/release.yml   # Signed release publishing
 ├── Makefile
 ├── install.sh
 └── README.md
@@ -323,6 +331,7 @@ bash tests/run_tests.sh
 
 # Or via Make
 make test
+sudo make integration-test
 
 # Syntax check all scripts
 make check

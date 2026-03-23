@@ -5,11 +5,13 @@ BASH_BIN   := bin/arch-recovery bin/arch-recovery.sh
 FISH_BIN   := bin/arch-recovery.fish
 LIBS       := $(wildcard lib/*.sh)
 TESTS      := $(wildcard tests/test_*.sh)
+INTEGRATION_TESTS := $(wildcard tests/integration/*.sh)
 MAN        := man/arch-recovery.1
 COMPLETIONS := completions/arch-recovery.bash completions/_arch-recovery \
                completions/arch-recovery.fish
+SIGNERS     := keys/release_signers.allowed
 
-.PHONY: all install uninstall check shellcheck test man clean help dist
+.PHONY: all install uninstall check shellcheck test integration-test man clean help dist release-manifest
 
 all: check test
 
@@ -25,7 +27,7 @@ uninstall:
 check:
 	@echo "Running syntax checks..."
 	@fail=0; \
-	for f in $(BASH_BIN) $(LIBS) install.sh tests/run_tests.sh tests/helpers.sh $(TESTS); do \
+	for f in $(BASH_BIN) $(LIBS) install.sh tests/run_tests.sh tests/helpers.sh $(TESTS) $(INTEGRATION_TESTS); do \
 	    bash -n "$$f" && echo "  ✓ $$f" || { echo "  ✗ $$f"; fail=1; }; \
 	done; \
 	if command -v fish >/dev/null 2>&1; then \
@@ -42,12 +44,16 @@ shellcheck:
 	@if ! command -v shellcheck &>/dev/null; then \
 	    echo "⚠  shellcheck not found (install: apt-get install shellcheck or pacman -S shellcheck)"; exit 0; fi
 	@shellcheck -S warning -x $(BASH_BIN) $(LIBS) install.sh \
-	    tests/run_tests.sh tests/helpers.sh $(TESTS) || true
+	    tests/run_tests.sh tests/helpers.sh $(TESTS) $(INTEGRATION_TESTS) || true
 	@echo "  shellcheck completed."
 
 ## test          — run unit test suite
 test:
 	@bash tests/run_tests.sh
+
+## integration-test — run privileged loopback integration tests
+integration-test:
+	@bash tests/integration/test_loopback.sh
 
 ## dist          — build verified release bundle in dist/
 dist:
@@ -65,8 +71,28 @@ dist:
 	        -czf "dist/$${archive}" --transform "s,^\.,$${root_dir}," .; \
 	fi; \
 	( cd dist && sha256sum "$${archive}" > "$${archive}.sha256" ); \
-	echo "Built dist/$${archive}"; \
-	echo "Built dist/$${archive}.sha256"
+		echo "Built dist/$${archive}"; \
+		echo "Built dist/$${archive}.sha256"
+
+## release-manifest — generate signed release manifest for the current version
+release-manifest: dist
+	@command -v ssh-keygen >/dev/null 2>&1 || { echo "ssh-keygen not found"; exit 1; }
+	@command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum not found"; exit 1; }
+	@version="$$(bash bin/arch-recovery --version | awk '{print $$2}')"; \
+		tag="v$${version}"; \
+		archive="dist/arch-system-recovery-$${tag}.tar.gz"; \
+		archive_name="$$(basename "$${archive}")"; \
+		manifest="docs/releases/$${tag}.manifest"; \
+		signing_key="$${SIGNING_KEY:-$$HOME/.ssh/id_ed25519}"; \
+		principal="$${RELEASE_SIGNER_PRINCIPAL:-$$(awk 'NF >= 2 {print $$1; exit}' $(SIGNERS))}"; \
+		[ -f "$${archive}" ] || { echo "Missing archive: $${archive}"; exit 1; }; \
+		[ -f "$(SIGNERS)" ] || { echo "Missing signers file: $(SIGNERS)"; exit 1; }; \
+		( cd dist && sha256sum "$${archive_name}" ) > "$${manifest}"; \
+		rm -f "$${manifest}.sig"; \
+		ssh-keygen -Y sign -f "$${signing_key}" -n arch-recovery -I "$${principal}" "$${manifest}" >/dev/null; \
+		ssh-keygen -Y verify -f "$(SIGNERS)" -I "$${principal}" -n arch-recovery -s "$${manifest}.sig" < "$${manifest}" >/dev/null; \
+		echo "Built $${manifest}"; \
+		echo "Built $${manifest}.sig"
 
 ## man           — render manpage to terminal
 man:

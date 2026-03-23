@@ -43,6 +43,7 @@ done
 BIN_DIR="${PREFIX}/bin"
 LIB_DIR="${PREFIX}/lib/arch-recovery"
 DOC_DIR="${PREFIX}/share/doc/arch-recovery"
+KEYS_DIR="${DOC_DIR}/keys"
 MAN_DIR="${PREFIX}/share/man/man1"
 BASH_COMP_DIR="${PREFIX}/share/bash-completion/completions"
 ZSH_COMP_DIR="${PREFIX}/share/zsh/site-functions"
@@ -70,7 +71,7 @@ fi
 # ── Install ───────────────────────────────────────────────────────────────────
 echo "Installing arch-recovery to ${PREFIX}..."
 
-install -d "${BIN_DIR}" "${LIB_DIR}" "${DOC_DIR}"
+install -d "${BIN_DIR}" "${LIB_DIR}" "${DOC_DIR}" "${KEYS_DIR}"
 
 # ── Library modules ───────────────────────────────────────────────────────────
 for module in "${SCRIPT_DIR}/lib/"*.sh; do
@@ -79,13 +80,17 @@ for module in "${SCRIPT_DIR}/lib/"*.sh; do
 done
 
 # ── Entry point (patch LIB_DIR path at install time) ─────────────────────────
+PATCHED_ENTRY="$(mktemp "${TMPDIR:-/tmp}/arch-recovery-install.XXXXXX")"
+trap 'rm -f "${PATCHED_ENTRY}"' EXIT
+
 sed \
     -e "s|LIB_DIR=\"\${REPO_ROOT}/lib\"|LIB_DIR=\"${LIB_DIR}\"  # patched by install.sh|" \
     "${SCRIPT_DIR}/bin/arch-recovery" \
-    > /tmp/arch-recovery-install-patched
+    > "${PATCHED_ENTRY}"
 
-install -m 755 /tmp/arch-recovery-install-patched "${BIN_DIR}/arch-recovery"
-rm -f /tmp/arch-recovery-install-patched
+install -m 755 "${PATCHED_ENTRY}" "${BIN_DIR}/arch-recovery"
+rm -f "${PATCHED_ENTRY}"
+trap - EXIT
 echo "  bin: ${BIN_DIR}/arch-recovery"
 
 # ── Shell launchers ───────────────────────────────────────────────────────────
@@ -99,6 +104,13 @@ for doc in "${SCRIPT_DIR}/docs/"*.md "${SCRIPT_DIR}/README.md"; do
     install -m 644 "${doc}" "${DOC_DIR}/"
     echo "  doc: ${DOC_DIR}/$(basename "${doc}")"
 done
+
+if [[ -d "${SCRIPT_DIR}/keys" ]]; then
+    for key in "${SCRIPT_DIR}/keys/"*; do
+        install -m 644 "${key}" "${KEYS_DIR}/"
+        echo "  key: ${KEYS_DIR}/$(basename "${key}")"
+    done
+fi
 
 # ── Manpage ───────────────────────────────────────────────────────────────────
 if ${INSTALL_MAN} && [[ -f "${SCRIPT_DIR}/man/arch-recovery.1" ]]; then
@@ -142,7 +154,7 @@ echo ""
 echo "  Usage:      sudo arch-recovery --help"
 echo "  Manpage:    man arch-recovery"
 echo "  Docs:       ${DOC_DIR}/"
-echo "  Log:        /tmp/recovery-toolkit.log"
+echo "  Log:        /tmp/arch-recovery-session.XXXXXX/recovery-toolkit.log"
 echo ""
 echo "  To uninstall:   sudo ./install.sh --uninstall"
 echo ""

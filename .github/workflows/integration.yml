@@ -1,0 +1,17 @@
+name: Integration
+
+on:
+  workflow_dispatch:
+
+jobs:
+  loopback:
+    name: loopback-integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install integration dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y btrfs-progs cryptsetup lvm2 dosfstools
+      - name: Run loopback integration suite
+        run: sudo bash tests/integration/test_loopback.sh

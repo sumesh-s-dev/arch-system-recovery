@@ -1,7 +1,7 @@
 .\" arch-recovery.1 — manual page for the Arch System Recovery Toolkit
 .\" Generate HTML preview: man2html arch-recovery.1
 .\" View locally:          man ./man/arch-recovery.1
-.TH ARCH\-RECOVERY 1 "2026-03-23" "arch\-recovery 1.1.1" "Arch Linux Utilities"
+.TH ARCH\-RECOVERY 1 "2026-03-23" "arch\-recovery 1.1.2" "Arch Linux Utilities"
 
 .SH NAME
 arch\-recovery \- Arch Linux system recovery toolkit
@@ -11,7 +11,7 @@ arch\-recovery \- Arch Linux system recovery toolkit
 [\fIOPTIONS\fR]
 
 .SH DESCRIPTION
-\fBarch\-recovery\fR is a modular, production-grade recovery toolkit for
+\fBarch\-recovery\fR is a modular recovery toolkit for
 Arch-based Linux systems.
 It is designed to run from a live USB environment and repair common boot
 failures without requiring expert knowledge of every recovery step.
@@ -29,7 +29,8 @@ The tool works in three primary modes:
 .IP \(bu 2
 \fBAuto\fR — fully non-interactive; suitable for scripts
 
-All modes produce a detailed log at \fI/tmp/recovery-toolkit.log\fR.
+All modes produce a detailed log in a private per-session directory under
+\fI/tmp/arch-recovery-session.*\fR. The exact path is printed at startup.
 
 .SH OPTIONS
 
@@ -103,7 +104,7 @@ recovered if needed.
 .TP
 .B \-\-health\-check
 Run a post-repair verification scan inside the chroot. Checks kernel
-images, initramfs, bootloader config, and systemd unit status.
+images, initramfs, bootloader config, EFI entries, and filesystem metadata.
 Produces a pass/warn/fail summary.
 
 .SS Self-update
@@ -111,7 +112,8 @@ Produces a pass/warn/fail summary.
 .BI \-\-update
 Check GitHub for a newer release and install it if one is available.
 Requires a verified release bundle asset and matching \fI.sha256\fR file,
-plus \fBcurl\fR(1), \fBtar\fR(1), and \fBsha256sum\fR(1).
+plus \fBcurl\fR(1), \fBtar\fR(1), and \fBsha256sum\fR(1). Authenticated
+releases also include a signed manifest verified by \fBssh-keygen\fR(1).
 .TP
 .B \-\-check\-update
 Check for updates without installing.
@@ -155,9 +157,9 @@ POSIX \fBsh\fR / \fBdash\fR / \fBzsh\fR wrapper.
 
 .SH FILES
 .TP
-.I /tmp/recovery-toolkit.log
+.I /tmp/arch-recovery-session.XXXXXX/recovery-toolkit.log
 Full log of all operations performed during the current session.
-Persists until reboot.
+The exact session directory is printed at startup and persists until reboot.
 .TP
 .I /etc/pacman.d/mirrorlist
 Modified by \fB\-\-repair\-keyring\fR.
@@ -238,7 +240,7 @@ No Secure Boot re-enrollment
 Recovery or scan completed successfully.
 .TP
 .B 1
-Fatal error encountered. See \fI/tmp/recovery-toolkit.log\fR.
+Fatal error encountered. See the session log path printed by arch-recovery.
 .TP
 .B 130
 Interrupted by user (SIGINT / Ctrl-C).

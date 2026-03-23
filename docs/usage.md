@@ -194,18 +194,19 @@ sudo ./bin/arch-recovery --log-level verbose
 
 ## Log file
 
-All operations are logged to `/tmp/recovery-toolkit.log` regardless of
-verbosity level:
+All operations are logged regardless of verbosity level. By default,
+`arch-recovery` creates a private per-session log under `/tmp` and prints the
+exact path at startup:
 
 ```bash
-# View live during a run
-tail -f /tmp/recovery-toolkit.log
+# Example live path
+tail -f /tmp/arch-recovery-session.XXXXXX/recovery-toolkit.log
 
 # View after
-cat /tmp/recovery-toolkit.log
+cat /tmp/arch-recovery-session.XXXXXX/recovery-toolkit.log
 
-# Save before rebooting (log is in /tmp — lost on reboot)
-cp /tmp/recovery-toolkit.log ~/recovery-$(date +%F_%H%M).log
+# Save before rebooting (the session dir is in /tmp — lost on reboot)
+cp /tmp/arch-recovery-session.XXXXXX/recovery-toolkit.log ~/recovery-$(date +%F_%H%M).log
 ```
 
 The log also contains a **rollback plan** written before any repair — a list
@@ -223,9 +224,11 @@ sudo ./bin/arch-recovery --check-update
 sudo ./bin/arch-recovery --update
 ```
 
-Release maintainers should upload both `make dist` assets:
+Release maintainers should publish both `make dist` assets and the signed manifest:
 - `arch-system-recovery-vX.Y.Z.tar.gz`
 - `arch-system-recovery-vX.Y.Z.tar.gz.sha256`
+- `arch-system-recovery-vX.Y.Z.manifest`
+- `arch-system-recovery-vX.Y.Z.manifest.sig`
 
 ---
 

@@ -3,6 +3,14 @@
 # Supports: NetworkManager (nmcli), systemd-networkd, wpa_supplicant, dhclient
 set -euo pipefail
 
+_run_interactive_logged_cmd() {
+    if command -v tee &>/dev/null; then
+        "$@" 2>&1 | tee -a "${LOG_FILE}" >&2
+    else
+        "$@" >> "${LOG_FILE}" 2>&1
+    fi
+}
+
 # ── setup_network ─────────────────────────────────────────────────────────────
 # Auto-detects the best available network tool and establishes connectivity.
 # For WiFi: asks for SSID and passphrase if not already connected.
@@ -103,23 +111,18 @@ _wifi_via_nmcli() {
     # List networks
     nmcli device wifi list ifname "${iface}" 2>/dev/null >&2 || true
 
-    local ssid passphrase
+    local ssid
     echo "" >&2
     _c_yellow; printf "  WiFi SSID: "; _c_reset
     read -r ssid
 
     [[ -z "${ssid}" ]] && return 1
 
-    _c_yellow; printf "  Password (leave blank if open): "; _c_reset
-    read -rs passphrase; echo "" >&2
-
-    if [[ -n "${passphrase}" ]]; then
-        nmcli device wifi connect "${ssid}" password "${passphrase}" \
-            ifname "${iface}" >> "${LOG_FILE}" 2>&1 || return 1
-    else
-        nmcli device wifi connect "${ssid}" ifname "${iface}" \
-            >> "${LOG_FILE}" 2>&1 || return 1
-    fi
+    # Try the open-network path first; if the AP requires credentials, hand off
+    # to nmcli's built-in secure prompt so the password never appears in argv.
+    nmcli device wifi connect "${ssid}" ifname "${iface}" >> "${LOG_FILE}" 2>&1 \
+        || _run_interactive_logged_cmd nmcli --ask device wifi connect "${ssid}" ifname "${iface}" \
+        || return 1
 
     sleep 3
     _network_already_up
@@ -136,14 +139,7 @@ _wifi_via_iwctl() {
     read -r ssid
     [[ -z "${ssid}" ]] && return 1
 
-    iwctl --passphrase "" station "${iface}" connect "${ssid}" \
-        >> "${LOG_FILE}" 2>&1 || {
-        # Passphrase-protected network
-        _c_yellow; printf "  Password: "; _c_reset
-        local pass; read -rs pass; echo "" >&2
-        iwctl --passphrase "${pass}" station "${iface}" connect "${ssid}" \
-            >> "${LOG_FILE}" 2>&1 || return 1
-    }
+    _run_interactive_logged_cmd iwctl station "${iface}" connect "${ssid}" || return 1
 
     sleep 3
     _network_already_up

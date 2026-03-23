@@ -144,15 +144,17 @@ Originally it relied on the global `MOUNT_ROOT`. Tests can't reassign a
 processes). Accepting `${1:-${MOUNT_ROOT}}` makes the function directly
 testable without any global mutation.
 
-### Why `run_cmd` is the single execution chokepoint
-Every command that modifies the system passes through `run_cmd`. It:
+### Why `run_cmd` is the preferred execution wrapper
+Most direct system-changing commands should pass through `run_cmd`. It:
 - Logs the command at debug level before running it
 - In `--dry-run` mode, logs `[dry-run]` and returns 0 without running
 - In `--debug` mode, tees output to the terminal in real time
 - On failure, calls `die` with the full command for easy log searching
 
-This means dry-run is guaranteed to be complete — no command can
-accidentally bypass it.
+This keeps dry-run and debug behavior consistent for the commands routed
+through it. Some modules still use direct command execution for interactive
+or streaming flows and should be reviewed carefully when new write paths are
+added.
 
 ### Why the EXIT trap instead of explicit cleanup calls
 The `_on_exit` trap fires on every exit path: normal return, `set -e` error,

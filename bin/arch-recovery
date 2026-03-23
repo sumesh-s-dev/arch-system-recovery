@@ -59,7 +59,6 @@ _on_exit() {
     if declare -f cleanup_mounts &>/dev/null && [[ "${DRY_RUN}" != "true" ]]; then
         cleanup_mounts 2>/dev/null || true
     fi
-    rm -f "/tmp/arch-recovery-preflight-$$.txt" 2>/dev/null || true
 }
 trap '_on_exit' EXIT
 trap 'echo ""; echo "Interrupted — cleaning up..."; exit 130' INT TERM
@@ -155,7 +154,8 @@ $(printf '\033[1m')SHELL LAUNCHERS$(printf '\033[0m')
     arch-recovery.sh        POSIX sh / dash
 
 $(printf '\033[1m')LOG$(printf '\033[0m')
-    ${LOG_FILE}
+    /tmp/arch-recovery-session.*/recovery-toolkit.log
+    (actual path printed at startup)
 
 $(printf '\033[1m')EXAMPLES$(printf '\033[0m')
     sudo arch-recovery                              # guided (beginner-friendly)
@@ -547,6 +547,7 @@ run_standalone_health_check() {
 GITHUB_REPO="sumesh-s-dev/arch-system-recovery"
 GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 RELEASE_BUNDLE_PREFIX="arch-system-recovery"
+RELEASE_SIGNING_NAMESPACE="arch-recovery"
 
 _fetch_release_json() {
     command -v curl &>/dev/null || \
@@ -573,6 +574,16 @@ _release_bundle_checksum_name() {
     echo "$(_release_bundle_name "${tag}").sha256"
 }
 
+_release_bundle_manifest_name() {
+    local tag="${1:?_release_bundle_manifest_name requires a tag}"
+    echo "${RELEASE_BUNDLE_PREFIX}-${tag}.manifest"
+}
+
+_release_bundle_manifest_signature_name() {
+    local tag="${1:?_release_bundle_manifest_signature_name requires a tag}"
+    echo "$(_release_bundle_manifest_name "${tag}").sig"
+}
+
 _release_asset_url() {
     local release_json="${1:?_release_asset_url requires release JSON}"
     local asset_name="${2:?_release_asset_url requires an asset name}"
@@ -593,6 +604,53 @@ _is_source_checkout() {
         [[ -d "${REPO_ROOT}/lib" ]] && [[ -f "${REPO_ROOT}/README.md" ]]
 }
 
+_release_signers_file() {
+    if [[ -n "${RELEASE_SIGNERS_FILE:-}" ]]; then
+        echo "${RELEASE_SIGNERS_FILE}"
+        return 0
+    fi
+
+    if [[ -f "${REPO_ROOT}/keys/release_signers.allowed" ]]; then
+        echo "${REPO_ROOT}/keys/release_signers.allowed"
+        return 0
+    fi
+
+    if [[ -f "${REPO_ROOT}/share/doc/arch-recovery/keys/release_signers.allowed" ]]; then
+        echo "${REPO_ROOT}/share/doc/arch-recovery/keys/release_signers.allowed"
+        return 0
+    fi
+
+    return 1
+}
+
+_release_signer_principal() {
+    if [[ -n "${RELEASE_SIGNER_PRINCIPAL:-}" ]]; then
+        echo "${RELEASE_SIGNER_PRINCIPAL}"
+        return 0
+    fi
+
+    awk 'NF >= 2 {print $1; exit}' "$(_release_signers_file)"
+}
+
+_verify_release_manifest_signature() {
+    local manifest_path="${1:?_verify_release_manifest_signature requires a manifest path}"
+    local signature_path="${2:?_verify_release_manifest_signature requires a signature path}"
+    local signers principal
+
+    command -v ssh-keygen &>/dev/null || die "Signed release verification requires ssh-keygen."
+    signers="$(_release_signers_file)" || die "Signed release verification requires release_signers.allowed."
+    principal="$(_release_signer_principal)" || die "Could not determine the trusted release signer principal."
+
+    ssh-keygen -Y verify \
+        -f "${signers}" \
+        -I "${principal}" \
+        -n "${RELEASE_SIGNING_NAMESPACE}" \
+        -s "${signature_path}" \
+        < "${manifest_path}" \
+        >> "${LOG_FILE}" 2>&1 \
+        || die "Release manifest signature verification failed."
+}
+
 _assert_clean_source_checkout() {
     _is_source_checkout || return 0
     command -v git &>/dev/null || die "Source checkout updates require git metadata and the git CLI."
@@ -606,12 +664,17 @@ _download_verified_release_bundle() {
     local release_json="${1:?_download_verified_release_bundle requires release JSON}"
     local tag="${2:?_download_verified_release_bundle requires a tag}"
     local tmpdir="${3:?_download_verified_release_bundle requires a temp dir}"
-    local archive_name checksum_name archive_url checksum_url
+    local archive_name checksum_name manifest_name signature_name
+    local archive_url checksum_url manifest_url signature_url
 
     archive_name="$(_release_bundle_name "${tag}")"
     checksum_name="$(_release_bundle_checksum_name "${tag}")"
+    manifest_name="$(_release_bundle_manifest_name "${tag}")"
+    signature_name="$(_release_bundle_manifest_signature_name "${tag}")"
     archive_url="$(_release_asset_url "${release_json}" "${archive_name}")"
     checksum_url="$(_release_asset_url "${release_json}" "${checksum_name}")"
+    manifest_url="$(_release_asset_url "${release_json}" "${manifest_name}")"
+    signature_url="$(_release_asset_url "${release_json}" "${signature_name}")"
 
     [[ -n "${archive_url}" && -n "${checksum_url}" ]] || \
         die "Release ${tag} is missing verified update assets (${archive_name} and ${checksum_name})."
@@ -625,8 +688,21 @@ _download_verified_release_bundle() {
     curl -fsSL "${checksum_url}" -o "${tmpdir}/${checksum_name}" \
         || die "Failed to download ${checksum_name}"
 
-    (cd "${tmpdir}" && sha256sum -c "${checksum_name}") >> "${LOG_FILE}" 2>&1 \
-        || die "Checksum verification failed for ${archive_name}"
+    if [[ -n "${manifest_url}" && -n "${signature_url}" ]]; then
+        curl -fsSL "${manifest_url}" -o "${tmpdir}/${manifest_name}" \
+            || die "Failed to download ${manifest_name}"
+        curl -fsSL "${signature_url}" -o "${tmpdir}/${signature_name}" \
+            || die "Failed to download ${signature_name}"
+        _verify_release_manifest_signature "${tmpdir}/${manifest_name}" "${tmpdir}/${signature_name}"
+        cmp -s "${tmpdir}/${manifest_name}" "${tmpdir}/${checksum_name}" \
+            || die "Signed manifest does not match ${checksum_name}"
+        (cd "${tmpdir}" && sha256sum -c "${manifest_name}") >> "${LOG_FILE}" 2>&1 \
+            || die "Signed manifest verification failed for ${archive_name}"
+    else
+        warn "Release ${tag} does not include signed manifest assets; falling back to checksum-only verification."
+        (cd "${tmpdir}" && sha256sum -c "${checksum_name}") >> "${LOG_FILE}" 2>&1 \
+            || die "Checksum verification failed for ${archive_name}"
+    fi
 
     echo "${tmpdir}/${archive_name}"
 }
@@ -716,7 +792,7 @@ _self_update() {
         return 0
     }
 
-    tmpdir="$(mktemp -d /tmp/arch-recovery-update.XXXXXX)"
+    tmpdir="$(_make_private_temp_dir "arch-recovery-update")"
     archive_path="$(_download_verified_release_bundle "${release_json}" "${latest_tag}" "${tmpdir}")"
     extracted_dir="$(_extract_verified_release_bundle "${archive_path}" "${latest_tag}" "${tmpdir}")"
     _install_verified_release_bundle "${extracted_dir}"

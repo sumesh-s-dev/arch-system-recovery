@@ -13,6 +13,16 @@ assert_not_empty "${TOOLKIT_VERSION}"  "TOOLKIT_VERSION should be set"
 assert_not_empty "${MOUNT_ROOT}"       "MOUNT_ROOT should be set"
 assert_not_empty "${LOG_FILE}"         "LOG_FILE should be set"
 
+default_log_path="$(bash -c "
+    unset LOG_FILE SESSION_DIR
+    source '${REPO_ROOT}/lib/core.sh'
+    init_log
+    printf '%s\n' \"\$LOG_FILE\"
+")"
+assert_contains "${default_log_path}" "/tmp/arch-recovery-session." \
+    "init_log defaults to a private session directory"
+rm -rf "$(dirname "${default_log_path}")"
+
 # log() writes to LOG_FILE (log writes to stderr AND file)
 log "test message alpha" 2>/dev/null
 assert_true "log writes to LOG_FILE" \
