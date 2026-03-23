@@ -17,6 +17,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch signed tag object
+        run: git fetch --force --tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y make git openssh-client
 
