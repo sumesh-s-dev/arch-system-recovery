@@ -16,7 +16,10 @@ auto_detect_root() {
     local -a candidates=()
     local candidate
     local best_dev=""
+    local best_fstype=""
     local best_score=-1
+    local container_candidates=0
+    local best_tied=false
 
     while IFS= read -r candidate; do
         local seen=false
@@ -38,22 +41,54 @@ auto_detect_root() {
     )
 
     for candidate in "${candidates[@]}"; do
-        local score
+        local score fstype
         score="$(_score_root_candidate "${candidate}")"
-        vlog "  Candidate ${candidate}: score=${score}"
+        fstype="$(blkid -s TYPE -o value "${candidate}" 2>/dev/null || true)"
+        _is_container_fstype "${fstype}" && (( container_candidates++ )) || true
+        vlog "  Candidate ${candidate}: type=${fstype:-unknown} score=${score}"
         if (( score > best_score )); then
             best_score="${score}"
             best_dev="${candidate}"
+            best_fstype="${fstype}"
+            best_tied=false
+        elif (( score == best_score )) && [[ -n "${best_dev}" ]] && [[ "${candidate}" != "${best_dev}" ]]; then
+            best_tied=true
         fi
     done
 
-    if [[ -n "${best_dev}" && ${best_score} -ge 6 ]]; then
+    if [[ -n "${best_dev}" ]] && \
+       _should_accept_auto_detect_root "${best_score}" "${best_fstype}" "${container_candidates}" "${best_tied}"; then
         log "  Auto-detected root: ${best_dev} (score=${best_score})"
         echo "${best_dev}"
         return 0
     fi
 
     die "Could not auto-detect root partition. Use --root <device> to specify it."
+}
+
+_is_container_fstype() {
+    case "${1:-}" in
+        crypto_LUKS|LVM2_member)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+_should_accept_auto_detect_root() {
+    local best_score="${1:-0}"
+    local best_fstype="${2:-}"
+    local container_candidates="${3:-0}"
+    local best_tied="${4:-false}"
+
+    ${best_tied} && return 1
+    (( best_score >= 6 )) && return 0
+
+    _is_container_fstype "${best_fstype}" || return 1
+    [[ "${container_candidates}" -eq 1 ]] || return 1
+    (( best_score >= 3 ))
 }
 
 _score_root_candidate() {

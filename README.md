@@ -88,6 +88,118 @@ sudo ./bin/arch-recovery --root /dev/sda2 --boot /dev/sda1 --efi /dev/sda3
 
 ---
 
+## Beginner guide
+
+If you are new to Arch recovery, use the tool in this order:
+
+1. Boot the **Arch Linux ISO**.
+2. Open a terminal.
+3. Clone this repo and enter it:
+
+```bash
+git clone https://github.com/sumesh-s-dev/arch-system-recovery.git
+cd arch-system-recovery
+chmod +x bin/arch-recovery
+```
+
+4. Start with a **safe scan**:
+
+```bash
+sudo ./bin/arch-recovery --diagnose
+```
+
+5. If the scan looks correct, run the **guided repair**:
+
+```bash
+sudo ./bin/arch-recovery
+```
+
+6. Only use `--auto` if you already know the layout is simple, or you are scripting:
+
+```bash
+sudo ./bin/arch-recovery --auto
+```
+
+### Which mode should I choose?
+
+| If you want to... | Run this |
+|---|---|
+| See what is broken without changing anything | `sudo ./bin/arch-recovery --diagnose` |
+| Be guided step by step | `sudo ./bin/arch-recovery` |
+| Use a full-screen menu | `sudo ./bin/arch-recovery --tui` |
+| Repair everything without prompts | `sudo ./bin/arch-recovery --auto` |
+| Preview the plan without writing anything | `sudo ./bin/arch-recovery --dry-run --verbose` |
+
+### What do `root`, `/boot`, and `EFI` mean?
+
+- **Root partition**: the main Linux system partition. This is usually the most important one.
+- **Separate `/boot` partition**: some systems keep kernel files on a small extra partition mounted at `/boot`.
+- **EFI partition**: a small FAT partition used by UEFI firmware to start Linux.
+
+If you do **not** know these devices, do not guess. Run interactive mode and let
+the tool detect them, or provide only the device you are sure about.
+
+### Safest commands for first-time users
+
+```bash
+# 1. Read-only scan first
+sudo ./bin/arch-recovery --diagnose
+
+# 2. Guided repair
+sudo ./bin/arch-recovery
+
+# 3. Optional: verify the repaired system afterwards
+sudo ./bin/arch-recovery --health-check
+```
+
+### Common beginner examples
+
+```bash
+# I do not know the partition layout
+sudo ./bin/arch-recovery
+
+# I want a menu instead of prompts
+sudo ./bin/arch-recovery --tui
+
+# I know the root partition, but not much else
+sudo ./bin/arch-recovery --root /dev/sda2
+
+# My system has a separate /boot and EFI partition
+sudo ./bin/arch-recovery --root /dev/sda2 --boot /dev/sda1 --efi /dev/sda3
+
+# I only want to inspect the system first
+sudo ./bin/arch-recovery --diagnose --root /dev/sda2
+```
+
+### What happens during a normal repair?
+
+In plain language, the tool usually does this:
+
+1. Finds your Linux root partition.
+2. Unlocks LUKS if the system is encrypted.
+3. Activates LVM if needed.
+4. Mounts the root, `/boot`, and EFI partitions.
+5. Checks `fstab`, initramfs, and bootloader state.
+6. Rebuilds initramfs and repairs the bootloader if needed.
+7. Writes a rollback plan into the log before any destructive step.
+8. Cleans up mounts automatically when it exits.
+
+### Rookie tips
+
+- Start with `--diagnose` if you are unsure.
+- Prefer the default interactive mode over `--auto`.
+- If the tool asks for a device and you are unsure, stop and run `lsblk` first.
+- Save the printed log path before rebooting. The session log lives under `/tmp` and disappears after reboot.
+- If your system uses BTRFS snapshots, list them before rolling back:
+
+```bash
+sudo ./bin/arch-recovery --list-snapshots --root /dev/sda2
+```
+
+For a more detailed walkthrough, see [docs/usage.md](docs/usage.md).
+
+---
+
 ## All modes
 
 ### Interactive (default)
@@ -116,7 +228,12 @@ sudo arch-recovery --diagnose --root /dev/sda2
 ```
 
 ### Auto — no prompts
-Auto-detects everything. Skips confirmation. Suitable for scripts.
+Auto-detects root, separate `/boot`, EFI, filesystem, and bootloader when the
+layout is unambiguous. Skips confirmation. Suitable for scripts.
+
+If required devices or the bootloader cannot be identified safely, the tool
+stops instead of guessing. Re-run with explicit `--root` / `--boot` / `--efi`
+arguments or use interactive mode.
 
 ```bash
 sudo arch-recovery --auto
@@ -194,6 +311,9 @@ sudo arch-recovery --update
 ```
 
 Build release assets with `make dist`, then generate a signed manifest with `make release-manifest`.
+Generating the signed manifest requires `ssh-keygen`, a signing key, and a
+matching entry in `keys/release_signers.allowed`.
+
 Authenticated releases publish four files:
 - `arch-system-recovery-vX.Y.Z.tar`
 - `arch-system-recovery-vX.Y.Z.tar.sha256`
@@ -303,10 +423,17 @@ arch-system-recovery/
 │   ├── test_cli.sh
 │   ├── test_core.sh
 │   ├── test_detect.sh
+│   ├── test_dist.sh
 │   ├── test_fstab.sh
 │   ├── test_health.sh
 │   ├── test_luks.sh
-│   └── test_snapshot.sh
+│   ├── test_main.sh
+│   ├── test_pacman.sh
+│   ├── test_repair.sh
+│   ├── test_snapshot.sh
+│   ├── test_update.sh
+│   └── integration/
+│       └── test_loopback.sh
 ├── docs/
 │   ├── architecture.md
 │   ├── releases/              # Versioned release notes + signed manifests
@@ -338,7 +465,7 @@ sudo make integration-test
 # Syntax check all scripts
 make check
 
-# ShellCheck (requires shellcheck package)
+# ShellCheck (enforced in CI; install shellcheck locally to run it)
 make shellcheck
 ```
 
@@ -348,7 +475,8 @@ make shellcheck
 
 - UEFI systems only — no legacy BIOS/MBR GRUB
 - x86\_64 only
-- LUKS single-layer only (no LUKS-on-LVM)
+- Unusual stacked storage layouts may require manual assembly before running the tool
+  (for example encrypted `/boot`, detached LUKS headers, or other non-standard layering)
 - Does not repair filesystem corruption (run `fsck` manually)
 - Does not install kernels or packages inside the chroot
 - No Secure Boot re-enrollment

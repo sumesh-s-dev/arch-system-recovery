@@ -162,13 +162,6 @@ check_deps() {
         command -v "${dep}" &>/dev/null || missing+=("${dep}")
     done
 
-    # At least one bootloader tool required for repair flows
-    if [[ "${mode}" == "full" ]] && \
-       ! command -v grub-install &>/dev/null && \
-       ! command -v bootctl &>/dev/null; then
-        missing+=("grub-install OR bootctl")
-    fi
-
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "Missing required tools: ${missing[*]}"
         echo "" >&2
@@ -178,6 +171,34 @@ check_deps() {
         die "Install missing tools before running arch-recovery."
     fi
     vlog "All required tools found."
+}
+
+check_bootloader_deps() {
+    local bootloader="${1:-unknown}"
+    local missing=()
+
+    case "${bootloader}" in
+        grub)
+            command -v grub-install &>/dev/null || missing+=("grub-install")
+            command -v grub-mkconfig &>/dev/null || missing+=("grub-mkconfig")
+            ;;
+        systemd-boot)
+            command -v bootctl &>/dev/null || missing+=("bootctl")
+            ;;
+        unknown|"")
+            return 0
+            ;;
+        *)
+            die "Unsupported bootloader dependency check: ${bootloader}"
+            ;;
+    esac
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        err "Missing required tools for ${bootloader} repair: ${missing[*]}"
+        echo "" >&2
+        echo "  Install the missing tool(s) before continuing." >&2
+        die "Bootloader repair dependencies are incomplete."
+    fi
 }
 
 # ── run_cmd ───────────────────────────────────────────────────────────────────

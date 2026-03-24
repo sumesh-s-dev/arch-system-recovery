@@ -56,6 +56,7 @@ _refresh_mirrorlist() {
     local ts
     ts=$(date '+%Y%m%d_%H%M%S')
     local ml_backup="${ml_target}.bak.${ts}"
+    local staged="${ml_target}.new"
 
     [[ -f "${ml_target}" ]] && cp "${ml_target}" "${ml_backup}"
     vlog "Mirrorlist backup: ${ml_backup}"
@@ -65,35 +66,57 @@ _refresh_mirrorlist() {
         return 0
     fi
 
+    rm -f "${staged}"
+    if _write_mirrorlist_file "${staged}" && [[ -s "${staged}" ]]; then
+        mv "${staged}" "${ml_target}"
+        log "  Mirrorlist updated: ${ml_target}"
+    else
+        rm -f "${staged}"
+        warn "Failed to refresh mirrorlist — keeping existing mirrorlist"
+    fi
+}
+
+_write_mirrorlist_file() {
+    local target="${1:?_write_mirrorlist_file requires a target path}"
+
     if command -v reflector &>/dev/null; then
         log "  Refreshing mirrorlist with reflector..."
-        reflector \
-            --country "${REFLECTOR_COUNTRY:-}" \
-            --latest 20 \
-            --sort rate \
-            --protocol https \
-            --save "${ml_target}" \
-            >> "${LOG_FILE}" 2>&1 \
-            || warn "reflector failed — keeping existing mirrorlist"
+        _write_reflector_mirrorlist "${target}"
+    elif command -v curl &>/dev/null; then
+        log "  reflector not found — fetching mirrorlist from archlinux.org via curl..."
+        _write_curl_mirrorlist "${target}"
+    elif command -v wget &>/dev/null; then
+        log "  reflector not found — fetching mirrorlist from archlinux.org via wget..."
+        _write_wget_mirrorlist "${target}"
     else
-        log "  reflector not found — fetching mirrorlist from archlinux.org..."
-        if command -v curl &>/dev/null; then
-            curl -s "https://archlinux.org/mirrorlist/?protocol=https&use_mirror_status=on&country=all" \
-                | sed 's/^#Server/Server/' \
-                > "${ml_target}.new" \
-                && mv "${ml_target}.new" "${ml_target}" \
-                || warn "Failed to fetch mirrorlist from archlinux.org"
-        elif command -v wget &>/dev/null; then
-            wget -qO- "https://archlinux.org/mirrorlist/?protocol=https&use_mirror_status=on&country=all" \
-                | sed 's/^#Server/Server/' \
-                > "${ml_target}" \
-                || warn "Failed to fetch mirrorlist via wget"
-        else
-            warn "Neither curl nor wget available — skipping mirrorlist refresh"
-        fi
+        warn "Neither reflector, curl, nor wget available — skipping mirrorlist refresh"
+        return 1
     fi
+}
 
-    log "  Mirrorlist updated: ${ml_target}"
+_write_reflector_mirrorlist() {
+    local target="${1:?_write_reflector_mirrorlist requires a target path}"
+    reflector \
+        --country "${REFLECTOR_COUNTRY:-}" \
+        --latest 20 \
+        --sort rate \
+        --protocol https \
+        --save "${target}" \
+        >> "${LOG_FILE}" 2>&1
+}
+
+_write_curl_mirrorlist() {
+    local target="${1:?_write_curl_mirrorlist requires a target path}"
+    curl -s "https://archlinux.org/mirrorlist/?protocol=https&use_mirror_status=on&country=all" \
+        | sed 's/^#Server/Server/' \
+        > "${target}"
+}
+
+_write_wget_mirrorlist() {
+    local target="${1:?_write_wget_mirrorlist requires a target path}"
+    wget -qO- "https://archlinux.org/mirrorlist/?protocol=https&use_mirror_status=on&country=all" \
+        | sed 's/^#Server/Server/' \
+        > "${target}"
 }
 
 # ── _network_available ────────────────────────────────────────────────────────

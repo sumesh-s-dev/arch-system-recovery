@@ -54,8 +54,13 @@ Falls back to a numbered bash menu if neither is found.
 sudo ./bin/arch-recovery --auto
 ```
 
-No prompts. Auto-detects root partition, EFI partition, filesystem type,
-and bootloader, then performs all repairs.
+No prompts. Auto-detects root partition, separate `/boot`, EFI partition,
+filesystem type, and bootloader, then performs all repairs.
+
+If auto-detection cannot safely choose between multiple candidates, or the
+bootloader cannot be identified confidently, the tool stops instead of
+guessing. In that case, re-run with explicit `--root` / `--boot` / `--efi`
+arguments or use interactive mode.
 
 ---
 
@@ -104,6 +109,9 @@ Enter passphrase for /dev/sda2:
 The unlocked mapper device is used for all subsequent steps. It is closed
 automatically when the tool exits.
 
+If the unlocked device contains an LVM physical volume, the tool activates the
+volume groups and continues on the detected root logical volume automatically.
+
 ---
 
 ## Selective repairs
@@ -149,13 +157,12 @@ After repairs complete, verify the system is ready to boot:
 
 ```bash
 sudo ./bin/arch-recovery --health-check
+sudo ./bin/arch-recovery --health-check --root /dev/sda2 --efi /dev/sda1
 ```
 
-Or run it as part of the full flow:
-
-```bash
-sudo ./bin/arch-recovery --auto --health-check
-```
+`--health-check` is best treated as a standalone verification pass. It mounts
+the target system read-only, inspects the boot layout, and prints a pass/warn/fail
+summary without modifying anything.
 
 ---
 
@@ -210,7 +217,10 @@ cp /tmp/arch-recovery-session.XXXXXX/recovery-toolkit.log ~/recovery-$(date +%F_
 ```
 
 The log also contains a **rollback plan** written before any repair — a list
-of manual commands to undo the changes if something goes wrong.
+of manual commands to undo the changes if something goes wrong. On encrypted
+or LVM-backed systems, that rollback plan includes the right mapped root path,
+any required `cryptsetup open` / `vgchange -ay` steps, and the detected EFI
+mountpoint.
 
 ---
 
@@ -229,6 +239,9 @@ Release maintainers should publish both `make dist` assets and the signed manife
 - `arch-system-recovery-vX.Y.Z.tar.sha256`
 - `arch-system-recovery-vX.Y.Z.manifest`
 - `arch-system-recovery-vX.Y.Z.manifest.sig`
+
+Generating the signed manifest locally requires `ssh-keygen`, a signing key,
+and a matching signer entry in `keys/release_signers.allowed`.
 
 For backward compatibility, releases may also ship `arch-system-recovery-vX.Y.Z.tar.gz`
 and `arch-system-recovery-vX.Y.Z.tar.gz.sha256` for older updater clients.

@@ -6,7 +6,8 @@
 bin/arch-recovery              Entry point, flag parsing, orchestration
 │
 ├── lib/core.sh                Foundation: logging, die/warn/vlog/dlog,
-│                              run_cmd, spin_while, check_root, check_deps
+│                              run_cmd, spin_while, check_root, check_deps,
+│                              check_bootloader_deps
 │
 ├── lib/ui.sh                  Terminal I/O: banner, prompts, confirm_repair
 ├── lib/tui.sh                 Full-screen menus (whiptail/dialog/bash fallback)
@@ -73,11 +74,18 @@ mount_root(MAPPED_ROOT, FS_TYPE)
     │   └─ ext4:  mount -t ext4
     │
     ▼
+detect_boot_device() OR prompt_boot_device()  →  BOOT_DEVICE
+[BOOT_DEVICE] mount_boot(BOOT_DEVICE)
+    │
+    ▼
 auto_detect_efi() OR prompt_efi_device()  →  EFI_DEVICE
 mount_efi(EFI_DEVICE)   →  resolves /boot/efi | /boot | /efi from fstab
     │
     ▼
 detect_bootloader(MOUNT_ROOT)  →  BOOTLOADER (grub | systemd-boot | unknown)
+    │
+    ▼
+[DO_BOOTLOADER]  check_bootloader_deps(BOOTLOADER)
     │
     ▼
 run_preflight(MAPPED_ROOT, EFI_DEVICE, FS_TYPE)
@@ -91,6 +99,7 @@ run_preflight(MAPPED_ROOT, EFI_DEVICE, FS_TYPE)
     ▼
 confirm_repair()   ← user types "yes" (skipped in --auto)
 _save_rollback_plan()  ← written to LOG_FILE before any changes
+    │                    captures ROOT_DEVICE, MAPPED_ROOT, boot/EFI layout
     │
     ▼
 [DO_KEYRING]  repair_pacman_keyring()
@@ -143,6 +152,13 @@ Originally it relied on the global `MOUNT_ROOT`. Tests can't reassign a
 `readonly` global even in subshells (bash propagates `readonly` into child
 processes). Accepting `${1:-${MOUNT_ROOT}}` makes the function directly
 testable without any global mutation.
+
+### Why auto-detection only accepts unambiguous encrypted/LVM candidates
+Plain ext4 and BTRFS roots can be probed directly and scored more confidently.
+Encrypted containers and LVM PVs expose less information until they are
+unlocked or activated, so `auto_detect_root` only accepts them automatically
+when there is a single clear candidate. If multiple encrypted/LVM candidates
+tie, the tool stops and asks for an explicit `--root` instead of guessing.
 
 ### Why `run_cmd` is the preferred execution wrapper
 Most direct system-changing commands should pass through `run_cmd`. It:

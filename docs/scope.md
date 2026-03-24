@@ -14,6 +14,7 @@
 | ext4 root partition | Standard `mount -t ext4` |
 | LUKS encrypted root | `cryptsetup open` before mounting |
 | LVM volume groups | `vgchange -ay` + auto-detection of root LV |
+| LUKS root with LVM inside | Unlock container first, then activate VG and select root LV |
 | Stale `/etc/fstab` UUID entries | Detected, commented out, backup saved |
 | Corrupt pacman keyring | `pacman-key --init` + `--populate archlinux` |
 | No network on live USB | nmcli / iwctl / wpa\_supplicant / dhclient |
@@ -27,7 +28,7 @@
 | Scenario | Reason |
 |---|---|
 | Legacy BIOS / MBR GRUB | Modern Arch installs use UEFI; MBR adds significant complexity for a shrinking user base |
-| LUKS2 on top of LVM (`LVM-on-LUKS` / `LUKS-on-LVM`) | Stacked block layers require explicit assembly steps not automatable safely |
+| Arbitrary multi-layer block stacks beyond the built-in LUKS/LVM paths | Unusual layering can require manual assembly before a safe mount is possible |
 | ZFS root | Requires out-of-tree kernel modules not present on the stock ISO |
 | Multi-device BTRFS RAID | Devices must be assembled manually before this tool can see a single mountable path |
 | Filesystem corruption repair | `fsck.ext4` or `btrfs check` must be run before mounting; this tool does not know which is needed |
@@ -72,6 +73,10 @@ umount -R /mnt/recovery
 
 **fstab edits** always create a timestamped backup (`/etc/fstab.bak.YYYYMMDD_HHMMSS`)
 before modifying anything. The original is never deleted.
+
+**Rollback plans in the log** are generated from the actual devices detected
+for the current session. On encrypted or LVM-backed systems, they include the
+mapped root path plus any required `cryptsetup open` and `vgchange -ay` steps.
 
 ---
 

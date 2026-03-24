@@ -5,7 +5,23 @@ set -euo pipefail
 source "${TESTS_DIR}/helpers.sh"
 
 export LOG_FILE="/tmp/test_update_$$.log"
+MOCK_DIR="$(mktemp -d /tmp/arch-recovery-update-mocks.XXXXXX)"
+export PATH="${MOCK_DIR}:${PATH}"
 source "${REPO_ROOT}/bin/arch-recovery"
+
+cat > "${MOCK_DIR}/ssh-keygen" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+    *"-Y verify"*)
+        exit 0
+        ;;
+esac
+
+exit 1
+EOF
+chmod +x "${MOCK_DIR}/ssh-keygen"
 
 release_json='
 {
@@ -50,15 +66,15 @@ assert_eq "$(_release_asset_url "${release_json}" "arch-system-recovery-v1.2.3.m
     "https://example.com/arch-system-recovery-v1.2.3.manifest.sig" "release asset URL parser finds manifest signature"
 
 tmpdir="$(mktemp -d /tmp/test-update-sign.XXXXXX)"
-ssh-keygen -q -t ed25519 -N "" -f "${tmpdir}/release_key" >/dev/null
-printf 'test-signer %s\n' "$(cat "${tmpdir}/release_key.pub")" > "${tmpdir}/allowed_signers"
+printf 'test-signer ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKeyForUnitTestsOnly\n' \
+    > "${tmpdir}/allowed_signers"
 printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  archive.tar\n' \
     > "${tmpdir}/manifest"
-ssh-keygen -Y sign -f "${tmpdir}/release_key" -n arch-recovery -I test-signer \
-    "${tmpdir}/manifest" >/dev/null 2>&1
+printf '%s\n' "mock-signature" > "${tmpdir}/manifest.sig"
 
 assert_exits_ok bash -c "
     export LOG_FILE=/dev/null
+    export PATH=\"${MOCK_DIR}:\$PATH\"
     export RELEASE_SIGNERS_FILE='${tmpdir}/allowed_signers'
     export RELEASE_SIGNER_PRINCIPAL='test-signer'
     source '${REPO_ROOT}/bin/arch-recovery'
@@ -66,5 +82,6 @@ assert_exits_ok bash -c "
 "
 
 rm -rf "${tmpdir}"
+rm -rf "${MOCK_DIR}"
 rm -f "${LOG_FILE}"
 test_summary

@@ -28,7 +28,6 @@ jobs:
           which shellcheck || echo "WARNING: shellcheck not found in PATH after install"
       - name: Run shellcheck
         run: make shellcheck
-        continue-on-error: true
 
   unit-tests:
     name: unit-tests

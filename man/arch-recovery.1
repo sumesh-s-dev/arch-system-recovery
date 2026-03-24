@@ -1,7 +1,7 @@
 .\" arch-recovery.1 — manual page for the Arch System Recovery Toolkit
 .\" Generate HTML preview: man2html arch-recovery.1
 .\" View locally:          man ./man/arch-recovery.1
-.TH ARCH\-RECOVERY 1 "2026-03-23" "arch\-recovery 1.1.2" "Arch Linux Utilities"
+.TH ARCH\-RECOVERY 1 "2026-03-24" "arch\-recovery 1.1.2" "Arch Linux Utilities"
 
 .SH NAME
 arch\-recovery \- Arch Linux system recovery toolkit
@@ -42,8 +42,10 @@ Requires \fBwhiptail\fR(1) or \fBdialog\fR(1); falls back to a pure-bash
 numbered menu if neither is available.
 .TP
 .B \-\-auto
-Non-interactive mode. Auto-detects all partitions and performs all default
-repairs without prompting.
+Non-interactive mode. Auto-detects root, boot, EFI, filesystem, and
+bootloader when the layout is unambiguous, then performs all default repairs
+without prompting. If a required device cannot be identified safely, the tool
+exits instead of guessing.
 .TP
 .B \-\-diagnose
 Scan the system and report problems. Makes \fBzero\fR changes to the target
@@ -103,9 +105,10 @@ recovered if needed.
 .SS Post-repair verification
 .TP
 .B \-\-health\-check
-Run a post-repair verification scan inside the chroot. Checks kernel
-images, initramfs, bootloader config, EFI entries, and filesystem metadata.
-Produces a pass/warn/fail summary.
+Run a standalone read-only verification pass. The tool mounts the target
+system and boot layout read-only, then checks kernel images, initramfs,
+bootloader config, EFI entries, and filesystem metadata. Produces a
+pass/warn/fail summary.
 
 .SS Self-update
 .TP
@@ -226,7 +229,8 @@ Architecture: x86_64 only
 .IP \(bu 2
 UEFI systems only (no legacy BIOS / MBR GRUB)
 .IP \(bu 2
-Single-layer LUKS only (no LUKS-on-LVM)
+Unusual stacked storage layouts may require manual assembly before running
+the tool (for example encrypted /boot or detached LUKS headers)
 .IP \(bu 2
 Does not repair filesystem corruption (\fBfsck\fR(8) must be run manually)
 .IP \(bu 2

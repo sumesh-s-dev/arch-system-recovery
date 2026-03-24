@@ -27,13 +27,15 @@ repair_bootloader() {
     local bootloader="${1:-unknown}"
     local efi_dev="${2:-}"
 
-    mount_bind  # bootloader tools need the same virtual filesystems as mkinitcpio
-
     case "${bootloader}" in
         grub)
+            check_bootloader_deps "grub"
+            mount_bind  # bootloader tools need the same virtual filesystems as mkinitcpio
             repair_grub "${efi_dev}"
             ;;
         systemd-boot)
+            check_bootloader_deps "systemd-boot"
+            mount_bind
             repair_systemd_boot
             ;;
         unknown)

@@ -96,6 +96,10 @@ result="$(detect_fstab_efi_device "${FAKE_ROOT}" 2>/dev/null)"
 assert_eq "${result}" "/dev/sdb2" "detect_fstab_efi_device resolves EFI device from fstab"
 
 assert_true "device_matches_spec matches UUID entries" device_matches_spec "/dev/sdb1" "UUID=boot-uuid"
+assert_true "strong native root scores are accepted" _should_accept_auto_detect_root 6 ext4 0 false
+assert_true "single encrypted container can be auto-detected" _should_accept_auto_detect_root 5 crypto_LUKS 1 false
+assert_false "multiple encrypted containers are not auto-selected" _should_accept_auto_detect_root 5 crypto_LUKS 2 false
+assert_false "ties are rejected for auto-detection" _should_accept_auto_detect_root 7 ext4 0 true
 
 rm -rf "${MOCK_DIR}" "${FAKE_ROOT}" "${LOG_FILE}"
 test_summary

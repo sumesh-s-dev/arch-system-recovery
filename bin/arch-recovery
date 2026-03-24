@@ -47,6 +47,8 @@ HEALTH_CHECK_ONLY=false
 DO_UPDATE=false
 CHECK_UPDATE_ONLY=false
 ROOT_AUTO_DETECTED=false
+ROOT_WAS_LUKS=false
+ROOT_WAS_LVM=false
 
 # ── Safety trap ───────────────────────────────────────────────────────────────
 _on_exit() {
@@ -272,6 +274,14 @@ _mount_boot_layout() {
     fi
 }
 
+_current_efi_mountpoint() {
+    local efi_target
+    efi_target="$(_resolve_efi_target "${MOUNT_ROOT}")"
+    efi_target="${efi_target#${MOUNT_ROOT}}"
+    [[ -n "${efi_target}" ]] || efi_target="/boot/efi"
+    echo "${efi_target}"
+}
+
 # ── Main orchestration ────────────────────────────────────────────────────────
 main() {
     parse_args "$@"
@@ -356,15 +366,20 @@ main() {
     # ── LUKS ──────────────────────────────────────────────────────────────────
     print_step "2" "Encryption check"
     MAPPED_ROOT="${ROOT_DEVICE}"
+    ROOT_WAS_LUKS=false
     if is_luks "${ROOT_DEVICE}"; then
         log "LUKS detected on ${ROOT_DEVICE}"
+        ROOT_WAS_LUKS=true
         MAPPED_ROOT="$(unlock_luks "${ROOT_DEVICE}")"
     else
         log "No LUKS encryption on ${ROOT_DEVICE}"
     fi
 
     # ── LVM ───────────────────────────────────────────────────────────────────
+    local pre_lvm_root="${MAPPED_ROOT}"
     MAPPED_ROOT="$(detect_lvm "${MAPPED_ROOT}")"
+    ROOT_WAS_LVM=false
+    [[ "${MAPPED_ROOT}" != "${pre_lvm_root}" ]] && ROOT_WAS_LVM=true
 
     # ── Filesystem ───────────────────────────────────────────────────────────
     print_step "3" "Filesystem detection"
@@ -409,6 +424,9 @@ main() {
     # ── Bootloader detection ─────────────────────────────────────────────────
     print_step "6" "Detect bootloader"
     BOOTLOADER="$(detect_bootloader)"
+    if ${DO_BOOTLOADER} && ! ${DRY_RUN}; then
+        check_bootloader_deps "${BOOTLOADER}"
+    fi
 
     # ── Pre-flight ────────────────────────────────────────────────────────────
     print_step "7" "Pre-flight checks"
@@ -429,7 +447,9 @@ main() {
     fi
 
     # Save rollback plan to log before touching anything
-    _save_rollback_plan "${ROOT_DEVICE}" "${BOOT_DEVICE:-}" "${EFI_DEVICE:-}" "${BOOTLOADER}"
+    _save_rollback_plan \
+        "${ROOT_DEVICE}" "${MAPPED_ROOT}" "${BOOT_DEVICE:-}" "${EFI_DEVICE:-}" \
+        "${BOOTLOADER}" "$(_current_efi_mountpoint)" "${ROOT_WAS_LUKS}" "${ROOT_WAS_LVM}"
 
     # ── Pacman keyring ────────────────────────────────────────────────────────
     if ${DO_KEYRING} && ! ${DRY_RUN}; then
@@ -473,24 +493,45 @@ main() {
 
 # ── Save rollback plan ────────────────────────────────────────────────────────
 _save_rollback_plan() {
-    local root="$1" boot="${2:-}" efi="${3:-}" bl="${4:-}"
+    local root="$1" mapped_root="$2" boot="${3:-}" efi="${4:-}" bl="${5:-}"
+    local efi_mountpoint="${6:-/boot/efi}"
+    local was_luks="${7:-false}"
+    local was_lvm="${8:-false}"
+    local step=1
     {
         echo "═══ ROLLBACK PLAN (generated $(date)) ═══"
         echo "If this recovery made things worse, here is how to undo it manually:"
         echo ""
-        echo "1. Boot the Arch live ISO again."
-        echo "2. If LUKS: cryptsetup open ${root} recovery_crypt"
-        echo "3. Mount root: mount ${root} /mnt"
-        [[ -n "${boot}" ]] && echo "4. Mount /boot: mount ${boot} /mnt/boot"
-        [[ -n "${efi}" ]] && echo "5. Mount EFI: mount ${efi} /mnt/boot/efi"
-        echo "6. arch-chroot /mnt"
-        echo "7. To redo initramfs: mkinitcpio -P"
+        echo "${step}. Boot the Arch live ISO again."
+        (( step++ ))
+        if ${was_luks}; then
+            echo "${step}. Unlock root container: cryptsetup open ${root} ${LUKS_MAPPER_NAME}"
+            (( step++ ))
+        fi
+        if ${was_lvm}; then
+            echo "${step}. Activate LVM volumes: vgchange -ay"
+            (( step++ ))
+        fi
+        echo "${step}. Mount root: mount ${mapped_root} /mnt"
+        (( step++ ))
+        [[ -n "${boot}" ]] && {
+            echo "${step}. Mount /boot: mount ${boot} /mnt/boot"
+            (( step++ ))
+        }
+        [[ -n "${efi}" ]] && {
+            echo "${step}. Mount EFI: mount ${efi} /mnt${efi_mountpoint}"
+            (( step++ ))
+        }
+        echo "${step}. arch-chroot /mnt"
+        (( step++ ))
+        echo "${step}. To redo initramfs: mkinitcpio -P"
+        (( step++ ))
         case "${bl}" in
             grub)
-                echo "8. To redo GRUB: grub-install --target=x86_64-efi --efi-directory=/boot/efi"
+                echo "${step}. To redo GRUB: grub-install --target=x86_64-efi --efi-directory=${efi_mountpoint}"
                 echo "                  grub-mkconfig -o /boot/grub/grub.cfg" ;;
             systemd-boot)
-                echo "8. To redo systemd-boot: bootctl install" ;;
+                echo "${step}. To redo systemd-boot: bootctl install" ;;
         esac
         echo "═══════════════════════════════════════════"
     } >> "${LOG_FILE}"

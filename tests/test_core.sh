@@ -60,5 +60,39 @@ assert_exits_ok bash -c "
     warn 'just a warning' 2>/dev/null
 "
 
+assert_exits_ok bash -c "
+    mock_dir=\"\$(mktemp -d /tmp/test-core-grub-ok.XXXXXX)\"
+    trap 'rm -rf \"\${mock_dir}\"' EXIT
+    printf '#!/usr/bin/env bash\nexit 0\n' > \"\${mock_dir}/grub-install\"
+    printf '#!/usr/bin/env bash\nexit 0\n' > \"\${mock_dir}/grub-mkconfig\"
+    chmod +x \"\${mock_dir}/grub-install\" \"\${mock_dir}/grub-mkconfig\"
+    export PATH=\"\${mock_dir}:\$PATH\"
+    export LOG_FILE=/dev/null
+    source '${REPO_ROOT}/lib/core.sh'
+    check_bootloader_deps grub
+"
+
+assert_exits_err bash -c "
+    mock_dir=\"\$(mktemp -d /tmp/test-core-grub-missing.XXXXXX)\"
+    trap 'rm -rf \"\${mock_dir}\"' EXIT
+    printf '#!/usr/bin/env bash\nexit 0\n' > \"\${mock_dir}/grub-install\"
+    chmod +x \"\${mock_dir}/grub-install\"
+    export PATH=\"\${mock_dir}:/usr/bin:/bin\"
+    export LOG_FILE=/dev/null
+    source '${REPO_ROOT}/lib/core.sh'
+    check_bootloader_deps grub
+"
+
+assert_exits_ok bash -c "
+    mock_dir=\"\$(mktemp -d /tmp/test-core-bootctl-ok.XXXXXX)\"
+    trap 'rm -rf \"\${mock_dir}\"' EXIT
+    printf '#!/usr/bin/env bash\nexit 0\n' > \"\${mock_dir}/bootctl\"
+    chmod +x \"\${mock_dir}/bootctl\"
+    export PATH=\"\${mock_dir}:\$PATH\"
+    export LOG_FILE=/dev/null
+    source '${REPO_ROOT}/lib/core.sh'
+    check_bootloader_deps systemd-boot
+"
+
 rm -f "${LOG_FILE}"
 test_summary
